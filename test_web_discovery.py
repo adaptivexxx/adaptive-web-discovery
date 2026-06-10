@@ -26,6 +26,46 @@ SAMPLE = (
 class DiscoveryTests(unittest.TestCase):
     def test_parse_ports_supports_ranges_and_comments(self) -> None:
         self.assertEqual(web_discovery.parse_ports("80,443\n8000-8002 # app ports"), {80, 443, 8000, 8001, 8002})
+        self.assertEqual(web_discovery.compact_ports({80, 443, 8000, 8001, 8002}), "80,443,8000-8002")
+
+    def test_nmap_discovery_command(self) -> None:
+        args = argparse.Namespace(
+            nmap_scan_type="connect", nmap_min_rate=500, nmap_max_retries=2,
+            nmap_host_timeout="10m", nmap_version_detection=True,
+            nmap_min_hostgroup=4096, nmap_timing="4", nmap_default_scripts=True,
+            nmap_host_discovery=False, nmap_extra_args="--version-intensity 5",
+        )
+        command = web_discovery.nmap_discovery_command(
+            "10.0.0.0/24", "80,443,8000-8002", Path("/tmp/network"), args,
+        )
+        self.assertIn("-sT", command)
+        self.assertIn("-sV", command)
+        self.assertIn("-sC", command)
+        self.assertIn("--min-hostgroup", command)
+        self.assertIn("-Pn", command)
+        self.assertIn("--version-intensity", command)
+        self.assertEqual(command[-1], "10.0.0.0/24")
+        args.nmap_extra_args = "-oA forbidden"
+        with self.assertRaisesRegex(ValueError, "tool-managed"):
+            web_discovery.nmap_discovery_command("10.0.0.0/24", "80", Path("/tmp/network"), args)
+
+    def test_native_nmap_cli_flags(self) -> None:
+        args = web_discovery.parser().parse_args([
+            "-iL", "networks.txt", "-ports", "ports.txt", "-sS", "-sC", "-sV", "-Pn",
+            "-T4", "--min-hostgroup", "4096", "--min-rate", "1000",
+            "--max-retries", "3", "--host-timeout", "5m",
+            "-oA", "prod-scan",
+        ])
+        self.assertEqual(args.nmap_scan_type, "syn")
+        self.assertTrue(args.nmap_default_scripts)
+        self.assertTrue(args.nmap_version_detection)
+        self.assertFalse(args.nmap_host_discovery)
+        self.assertEqual(args.nmap_timing, "4")
+        self.assertEqual(args.nmap_min_hostgroup, 4096)
+        self.assertEqual(args.nmap_min_rate, 1000)
+        self.assertEqual(args.nmap_max_retries, 3)
+        self.assertEqual(args.nmap_host_timeout, "5m")
+        self.assertEqual(args.nmap_output_all_name, "prod-scan")
 
     def test_network_file_services_and_endpoint_limit(self) -> None:
         root = Path(tempfile.mkdtemp())

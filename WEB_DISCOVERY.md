@@ -111,13 +111,14 @@ python3 web_discovery.py \
   --acknowledge-authorization
 ```
 
-Probe authorized network ranges and TCP ports from files:
+Discover open services across authorized network ranges, then fingerprint them:
 
 ```bash
 python3 web_discovery.py \
   -iL networks.txt \
   -ports ports.txt \
-  --max-network-endpoints 10000 \
+  --nmap-workers 8 \
+  --nmap-min-rate 500 \
   --mode fingerprint \
   --fingerprint-probes basic \
   --acknowledge-authorization
@@ -125,9 +126,36 @@ python3 web_discovery.py \
 
 `networks.txt` accepts one IPv4/IPv6 address or CIDR per line. `ports.txt` accepts
 comma-separated, whitespace-separated, or line-separated TCP ports and ranges such as
-`80,443,4317-4318`; `#` comments are ignored. The endpoint limit applies to the
-address/port Cartesian product and is enforced before requests are sent. Known HTTP/HTTPS
-ports and playbook hints select the likely scheme; ambiguous ports try both HTTPS and HTTP.
+`80,443,4317-4318`; `#` comments are ignored. By default, the tool runs bounded parallel
+Nmap workers, stores their XML under `nmap-discovery/`, imports open services, and sends
+only HTTP-capable services into web fingerprinting and enumeration. It uses unprivileged
+TCP connect scans by default; use `--nmap-scan-type syn` only when running with the needed
+privileges. Worker commands, return codes, and bounded output are preserved in
+`nmap-discovery.json` and the final manifest.
+
+The default worker command is equivalent to:
+
+```bash
+nmap -n -sT --open --min-rate 500 --max-retries 2 --host-timeout 10m \
+  -Pn -sV -p PORTS -oX WORKER.xml NETWORK
+```
+
+The CLI accepts familiar Nmap flags directly: `-sT`, `-sS`, `-Pn`, `-sV`, `-sC`,
+`-T0` through `-T5`, `--min-rate`, `--min-hostgroup`, `--max-retries`, and
+`--host-timeout`. Existing `--nmap-*` forms remain backward-compatible aliases.
+Use `--nmap-extra-args` for other advanced Nmap options. Output files, port selection, and
+worker targets remain tool-managed.
+
+XML is the default output because it is the structured source used for automatic
+ingestion. Use `--nmap-output-name prod-scan` to produce names such as
+`prod-scan-0001.xml`. Use native `-oA prod-scan` or
+`--nmap-output-format all --nmap-output-name prod-scan` to preserve XML, normal, and
+grepable output for every worker. The numeric suffix is mandatory to prevent parallel
+workers from overwriting each other.
+
+Use `--network-discovery direct` only for small inputs that should bypass Nmap. Direct mode
+expands the address/port Cartesian product, enforces `--max-network-endpoints`, and probes
+known HTTP/HTTPS schemes or both schemes for ambiguous ports.
 
 Run API-focused discovery with controlled concurrency:
 

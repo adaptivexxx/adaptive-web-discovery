@@ -240,6 +240,28 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("-iL", "--network-file", action="append", type=Path, help="File containing authorized IP addresses or CIDRs; repeatable")
     p.add_argument("-ports", "--ports-file", action="append", type=Path, help="File containing TCP ports or ranges such as 80,443,8000-8010; repeatable")
     p.add_argument("--max-network-endpoints", type=positive_int, default=10000, help="Maximum generated network address/port pairs")
+    p.add_argument("--network-discovery", choices=("nmap", "direct"), default="nmap", help="How -iL/-ports inputs discover open services")
+    p.add_argument("--nmap-workers", type=positive_int, default=8, help="Parallel Nmap processes for network discovery")
+    p.add_argument("--nmap-scan-type", choices=("connect", "syn"), default="connect", help="Nmap TCP scan type; syn generally requires root")
+    scan_type = p.add_mutually_exclusive_group()
+    scan_type.add_argument("-sT", action="store_const", const="connect", dest="nmap_scan_type", help="Use Nmap TCP connect scan")
+    scan_type.add_argument("-sS", action="store_const", const="syn", dest="nmap_scan_type", help="Use Nmap SYN scan; generally requires root")
+    p.add_argument("--nmap-min-rate", "--min-rate", dest="nmap_min_rate", type=positive_int, default=500, help="Minimum packet rate per Nmap worker")
+    p.add_argument("--nmap-min-hostgroup", "--min-hostgroup", dest="nmap_min_hostgroup", type=positive_int, help="Minimum hosts scanned in parallel by each Nmap worker")
+    p.add_argument("--nmap-max-retries", "--max-retries", dest="nmap_max_retries", type=positive_int, default=2, help="Maximum Nmap probe retransmissions")
+    p.add_argument("--nmap-host-timeout", "--host-timeout", dest="nmap_host_timeout", default="10m", help="Nmap per-host timeout")
+    p.add_argument("--nmap-timing", choices=("0", "1", "2", "3", "4", "5"), help="Nmap timing template")
+    for timing in range(6):
+        p.add_argument(f"-T{timing}", action="store_const", const=str(timing), dest="nmap_timing", help=argparse.SUPPRESS)
+    p.add_argument("--nmap-default-scripts", "-sC", dest="nmap_default_scripts", action="store_true", help="Run Nmap default scripts")
+    p.add_argument("--nmap-host-discovery", action="store_true", help="Enable Nmap host discovery instead of using -Pn")
+    p.add_argument("-Pn", action="store_false", dest="nmap_host_discovery", help="Skip Nmap host discovery")
+    p.add_argument("--no-nmap-version-detection", action="store_false", dest="nmap_version_detection", default=True, help="Disable Nmap service/version detection")
+    p.add_argument("-sV", action="store_true", dest="nmap_version_detection", help="Enable Nmap service/version detection")
+    p.add_argument("--nmap-output-name", default="scan", help="Base name for parallel Nmap output files")
+    p.add_argument("--nmap-output-format", choices=("xml", "all"), default="xml", help="Write XML only or Nmap -oA output")
+    p.add_argument("-oA", dest="nmap_output_all_name", metavar="BASENAME", help="Write all Nmap formats using this base name")
+    p.add_argument("--nmap-extra-args", default="", help="Additional Nmap arguments; output, ports, and targets remain tool-managed")
     p.add_argument("--gnmap", action="append", type=Path, help="Nmap grepable output file; repeatable")
     p.add_argument("--nmap", action="append", type=Path, help="Nmap normal output file; repeatable")
     p.add_argument("--nmap-xml", action="append", type=Path, help="Nmap XML output file; repeatable and preferred")
@@ -294,6 +316,7 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Confirm you are authorized to scan every supplied target",
     )
+    p.set_defaults(nmap_scan_type="connect", nmap_host_discovery=False, nmap_version_detection=True)
     return p
 
 
@@ -340,6 +363,45 @@ def parse_ports(value: str) -> set[int]:
                 if not 1 <= port <= 65535:
                     raise ValueError(f"invalid port: {port}")
                 ports.add(port)
+    return ports
+
+
+def compact_ports(ports: set[int]) -> str:
+    ordered = sorted(ports)
+    ranges = []
+    start = previous = None
+    for port in ordered:
+        if start is None:
+            start = previous = port
+        elif port == previous + 1:
+            previous = port
+        else:
+            ranges.append(str(start) if start == previous else f"{start}-{previous}")
+            start = previous = port
+    if start is not None:
+        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    return ",".join(ranges)
+
+
+def read_network_specs(paths: list[Path]) -> list[str]:
+    networks = []
+    for path in paths:
+        for line_number, line in enumerate(path.expanduser().read_text(encoding="utf-8").splitlines(), 1):
+            value = line.split("#", 1)[0].strip()
+            if not value:
+                continue
+            try:
+                network = ipaddress.ip_network(value, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"invalid network in {path}:{line_number}: {value}") from exc
+            networks.append(str(network))
+    return list(dict.fromkeys(networks))
+
+
+def read_port_files(paths: list[Path]) -> set[int]:
+    ports = set()
+    for path in paths:
+        ports.update(parse_ports(path.expanduser().read_text(encoding="utf-8")))
     return ports
 
 
@@ -604,9 +666,7 @@ def network_file_services(args: argparse.Namespace) -> list[dict[str, object]]:
     if not network_files:
         return []
 
-    ports = set()
-    for path in port_files:
-        ports.update(parse_ports(path.expanduser().read_text(encoding="utf-8")))
+    ports = read_port_files(port_files)
     if not ports:
         raise ValueError("port files must contain at least one port")
     max_addresses = args.max_network_endpoints // len(ports)
@@ -663,6 +723,108 @@ def network_file_services(args: argparse.Namespace) -> list[dict[str, object]]:
     ]
 
 
+def nmap_discovery_command(network: str, ports: str, output_base: Path, args: argparse.Namespace) -> list[str]:
+    command = [
+        "nmap", "-n", "-sT" if args.nmap_scan_type == "connect" else "-sS",
+        "--open", "--min-rate", str(args.nmap_min_rate),
+        "--max-retries", str(args.nmap_max_retries),
+        "--host-timeout", args.nmap_host_timeout,
+    ]
+    if not args.nmap_host_discovery:
+        command.append("-Pn")
+    if args.nmap_min_hostgroup:
+        command += ["--min-hostgroup", str(args.nmap_min_hostgroup)]
+    if args.nmap_timing:
+        command.append(f"-T{args.nmap_timing}")
+    if args.nmap_version_detection:
+        command.append("-sV")
+    if args.nmap_default_scripts:
+        command.append("-sC")
+    extra = shlex.split(args.nmap_extra_args)
+    protected = {"-p", "--ports", "-oA", "-oX", "-oN", "-oG", "-iL"}
+    for index, value in enumerate(extra):
+        if value in protected or any(value.startswith(prefix + "=") for prefix in protected if prefix.startswith("--")):
+            raise ValueError(f"--nmap-extra-args cannot override tool-managed argument: {value}")
+        if index and extra[index - 1] in protected:
+            raise ValueError(f"--nmap-extra-args cannot override tool-managed argument: {extra[index - 1]}")
+    output_args = (
+        ["-oA", str(output_base)]
+        if getattr(args, "nmap_output_format", "xml") == "all" or getattr(args, "nmap_output_all_name", None)
+        else ["-oX", str(output_base.with_suffix(".xml"))]
+    )
+    return command + extra + ["-p", ports] + output_args + [network]
+
+
+def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Path], list[dict[str, object]]]:
+    network_files = args.network_file or []
+    port_files = args.ports_file or []
+    if bool(network_files) != bool(port_files):
+        raise ValueError("-iL/--network-file and -ports/--ports-file must be supplied together")
+    if not network_files:
+        return [], []
+    networks = read_network_specs(network_files)
+    ports = read_port_files(port_files)
+    if not networks or not ports:
+        raise ValueError("network and port files must contain at least one network and port")
+    if not args.dry_run and not shutil.which("nmap"):
+        raise FileNotFoundError("nmap is required for --network-discovery nmap")
+
+    output_dir = run_dir / "nmap-discovery"
+    if not args.dry_run:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    output_name = args.nmap_output_all_name or args.nmap_output_name
+    if Path(output_name).name != output_name or not re.fullmatch(r"[A-Za-z0-9._-]+", output_name):
+        raise ValueError("Nmap output name must be a simple basename containing letters, numbers, dots, underscores, or hyphens")
+    jobs = [
+        (network, output_dir / f"{output_name}-{index:04d}")
+        for index, network in enumerate(networks, 1)
+    ]
+    port_spec = compact_ports(ports)
+    console("PHASE", "Parallel Nmap network discovery", args.color)
+    console(
+        "INFO",
+        f"networks={len(networks)} ports={len(ports)} workers={args.nmap_workers}"
+        f" scan-type={args.nmap_scan_type} min-rate={args.nmap_min_rate}",
+        args.color,
+    )
+
+    def scan(job: tuple[str, Path]) -> dict[str, object]:
+        network, output_base = job
+        command = nmap_discovery_command(network, port_spec, output_base, args)
+        xml_output = output_base.with_suffix(".xml")
+        console("RUN", shlex.join(command), args.color)
+        if args.dry_run:
+            return {"network": network, "output": str(xml_output), "output_base": str(output_base), "command": command, "returncode": None}
+        completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        return {
+            "network": network,
+            "output": str(xml_output),
+            "output_base": str(output_base),
+            "command": command,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout[-4096:],
+            "stderr": completed.stderr[-4096:],
+        }
+
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.nmap_workers) as executor:
+        futures = [executor.submit(scan, job) for job in jobs]
+        for completed_count, future in enumerate(concurrent.futures.as_completed(futures), 1):
+            result = future.result()
+            results.append(result)
+            level = "OK" if result["returncode"] in (None, 0) else "WARN"
+            console(
+                level,
+                f"Nmap {completed_count}/{len(futures)} | {result['network']}"
+                f" | returncode={result['returncode']}",
+                args.color,
+            )
+    if not args.dry_run:
+        (run_dir / "nmap-discovery.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+    outputs = [Path(result["output"]) for result in results if result["returncode"] in (None, 0)]
+    return outputs, results
+
+
 def format_url_host(host: str) -> str:
     try:
         return f"[{host}]" if ipaddress.ip_address(host).version == 6 else host
@@ -715,7 +877,8 @@ def read_targets(
     services = []
     warnings = []
     raw = list(args.url or [])
-    services.extend(network_file_services(args))
+    if args.network_discovery == "direct":
+        services.extend(network_file_services(args))
     for input_path in args.input or []:
         raw.extend(input_path.read_text(encoding="utf-8").splitlines())
     for paths, parser_function in (
@@ -742,7 +905,7 @@ def read_targets(
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError(f"invalid HTTP(S) target: {line!r}")
         targets.append(target.rstrip("/"))
-    if not targets:
+    if not targets and not (services or (args.network_file and args.network_discovery == "nmap")):
         raise ValueError("no targets supplied")
     return list(dict.fromkeys(targets)), services, warnings
 
@@ -1738,8 +1901,18 @@ def main() -> int:
     if not args.dry_run and not args.acknowledge_authorization:
         console("ERROR", "pass --acknowledge-authorization before executing scans", args.color, sys.stderr)
         return 2
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = args.output.expanduser().resolve() / timestamp
+    nmap_discovery_results = []
     try:
         technology_paths, signatures, follow_up, explicit_only, playbook_metadata = load_catalog(args)
+        if args.network_file and args.network_discovery == "nmap":
+            outputs, nmap_discovery_results = run_nmap_discovery(args, run_dir)
+            if args.dry_run and not any((args.url, args.input, args.gnmap, args.nmap, args.nmap_xml)):
+                console("OK", "dry-run Nmap discovery plan completed", args.color)
+                return 0
+            if not args.dry_run:
+                args.nmap_xml = list(args.nmap_xml or []) + outputs
         targets, discovered_services, import_warnings = read_targets(args, playbook_metadata)
         scope_policy = load_scope_policy(args.scope_policy, targets)
         wordlists = resolve_wordlists(args) if args.mode != "fingerprint" else []
@@ -1752,8 +1925,6 @@ def main() -> int:
         console("ERROR", str(exc), args.color, sys.stderr)
         return 2
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = args.output.expanduser().resolve() / timestamp
     fingerprints = []
     console(
         "PHASE",
@@ -1884,6 +2055,7 @@ def main() -> int:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "mode": args.mode,
                 "scope_policy": scope_policy,
+                "nmap_discovery": nmap_discovery_results,
                 "discovered_services": discovered_services,
                 "import_warnings": import_warnings,
                 "fingerprints": fingerprints,
@@ -1956,6 +2128,7 @@ def main() -> int:
             "mode": args.mode,
             "profile": args.profile,
             "scope_policy": scope_policy,
+            "nmap_discovery": nmap_discovery_results,
             "discovered_services": discovered_services,
             "import_warnings": import_warnings,
             "fingerprints": fingerprints,
