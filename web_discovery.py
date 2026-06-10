@@ -237,6 +237,9 @@ def parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-u", "--url", action="append", help="Target URL; repeat for multiple targets")
     p.add_argument("-i", "--input", action="append", type=Path, help="File containing one target URL per line; repeatable")
+    p.add_argument("-iL", "--network-file", action="append", type=Path, help="File containing authorized IP addresses or CIDRs; repeatable")
+    p.add_argument("-ports", "--ports-file", action="append", type=Path, help="File containing TCP ports or ranges such as 80,443,8000-8010; repeatable")
+    p.add_argument("--max-network-endpoints", type=positive_int, default=10000, help="Maximum generated network address/port pairs")
     p.add_argument("--gnmap", action="append", type=Path, help="Nmap grepable output file; repeatable")
     p.add_argument("--nmap", action="append", type=Path, help="Nmap normal output file; repeatable")
     p.add_argument("--nmap-xml", action="append", type=Path, help="Nmap XML output file; repeatable and preferred")
@@ -322,12 +325,21 @@ def positive_int(value: str) -> int:
 
 def parse_ports(value: str) -> set[int]:
     ports = set()
-    for item in value.split(","):
+    cleaned = "\n".join(line.split("#", 1)[0] for line in value.splitlines())
+    for item in re.split(r"[\s,]+", cleaned):
         if item.strip():
-            port = int(item)
-            if not 1 <= port <= 65535:
-                raise ValueError(f"invalid port: {port}")
-            ports.add(port)
+            if "-" in item:
+                start_text, end_text = item.split("-", 1)
+                start, end = int(start_text), int(end_text)
+                if start > end:
+                    raise ValueError(f"invalid port range: {item}")
+                candidates = range(start, end + 1)
+            else:
+                candidates = (int(item),)
+            for port in candidates:
+                if not 1 <= port <= 65535:
+                    raise ValueError(f"invalid port: {port}")
+                ports.add(port)
     return ports
 
 
@@ -558,7 +570,16 @@ def gnmap_targets(
             all(hint.get("web") for hint in hints)
             or any(hint.get("confidence") in {"high", "medium"} for hint in web_hints)
         )
-        if args.nmap_all_open_ports:
+        if item.get("explicit_web_probe") and web_hints_supported:
+            schemes = tuple(dict.fromkeys(str(hint.get("scheme", "http")) for hint in web_hints))
+        elif item.get("explicit_web_probe"):
+            if port in https_ports and port not in http_ports:
+                schemes = ("https",)
+            elif port in http_ports and port not in https_ports:
+                schemes = ("http",)
+            else:
+                schemes = ("https", "http")
+        elif args.nmap_all_open_ports:
             schemes = ("https", "http")
         elif web_hints_supported:
             schemes = tuple(dict.fromkeys(str(hint.get("scheme", "http")) for hint in web_hints))
@@ -573,6 +594,73 @@ def gnmap_targets(
             suffix = "" if port == default_port else f":{port}"
             targets.append(f"{scheme}://{host}{suffix}")
     return list(dict.fromkeys(targets))
+
+
+def network_file_services(args: argparse.Namespace) -> list[dict[str, object]]:
+    network_files = args.network_file or []
+    port_files = args.ports_file or []
+    if bool(network_files) != bool(port_files):
+        raise ValueError("-iL/--network-file and -ports/--ports-file must be supplied together")
+    if not network_files:
+        return []
+
+    ports = set()
+    for path in port_files:
+        ports.update(parse_ports(path.expanduser().read_text(encoding="utf-8")))
+    if not ports:
+        raise ValueError("port files must contain at least one port")
+    max_addresses = args.max_network_endpoints // len(ports)
+    if max_addresses < 1:
+        raise ValueError("port files alone exceed --max-network-endpoints")
+
+    addresses = []
+    for path in network_files:
+        for line_number, line in enumerate(path.expanduser().read_text(encoding="utf-8").splitlines(), 1):
+            value = line.split("#", 1)[0].strip()
+            if not value:
+                continue
+            try:
+                network = ipaddress.ip_network(value, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"invalid network in {path}:{line_number}: {value}") from exc
+            if network.num_addresses == 1:
+                addresses.append(str(network.network_address))
+            else:
+                for address in network.hosts():
+                    addresses.append(str(address))
+                    if len(set(addresses)) > max_addresses:
+                        raise ValueError(
+                            "network files exceed --max-network-endpoints when combined with supplied ports"
+                        )
+            if len(set(addresses)) > max_addresses:
+                raise ValueError("network files exceed --max-network-endpoints when combined with supplied ports")
+    if not addresses:
+        raise ValueError("network and port files must contain at least one address and port")
+    endpoint_count = len(set(addresses)) * len(ports)
+    if endpoint_count > args.max_network_endpoints:
+        raise ValueError(
+            f"network files generate {endpoint_count} address/port pairs, exceeding"
+            f" --max-network-endpoints {args.max_network_endpoints}"
+        )
+    return [
+        {
+            "address": address,
+            "hostname": None,
+            "port": port,
+            "state": "candidate",
+            "protocol": "tcp",
+            "owner": None,
+            "service": "unknown",
+            "rpc_info": None,
+            "version": None,
+            "source": ",".join(str(path.expanduser()) for path in network_files),
+            "source_line": None,
+            "raw": f"{address}:{port}/tcp from -iL/-ports",
+            "explicit_web_probe": True,
+        }
+        for address in dict.fromkeys(addresses)
+        for port in sorted(ports)
+    ]
 
 
 def format_url_host(host: str) -> str:
@@ -627,6 +715,7 @@ def read_targets(
     services = []
     warnings = []
     raw = list(args.url or [])
+    services.extend(network_file_services(args))
     for input_path in args.input or []:
         raw.extend(input_path.read_text(encoding="utf-8").splitlines())
     for paths, parser_function in (
@@ -1644,7 +1733,7 @@ def main() -> int:
                 f" follow_up={len(follow_up)} explicit_only={len(explicit_only)}"
             )
         return 0
-    if not args.url and not args.input and not args.gnmap and not args.nmap and not args.nmap_xml:
+    if not args.url and not args.input and not args.network_file and not args.ports_file and not args.gnmap and not args.nmap and not args.nmap_xml:
         argument_parser.error("at least one target source is required unless listing or validating catalog data")
     if not args.dry_run and not args.acknowledge_authorization:
         console("ERROR", "pass --acknowledge-authorization before executing scans", args.color, sys.stderr)

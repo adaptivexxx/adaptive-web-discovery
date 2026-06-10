@@ -24,6 +24,31 @@ SAMPLE = (
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_parse_ports_supports_ranges_and_comments(self) -> None:
+        self.assertEqual(web_discovery.parse_ports("80,443\n8000-8002 # app ports"), {80, 443, 8000, 8001, 8002})
+
+    def test_network_file_services_and_endpoint_limit(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        networks = root / "networks.txt"
+        ports = root / "ports.txt"
+        networks.write_text("10.0.0.0/30\n# comment\n10.0.0.9\n", encoding="utf-8")
+        ports.write_text("80,443\n4318\n", encoding="utf-8")
+        args = argparse.Namespace(
+            network_file=[networks], ports_file=[ports], max_network_endpoints=9,
+        )
+        services = web_discovery.network_file_services(args)
+        self.assertEqual(len(services), 9)
+        self.assertTrue(all(item["explicit_web_probe"] for item in services))
+        target_args = argparse.Namespace(http_ports="80,4318", https_ports="443", nmap_all_open_ports=False)
+        targets = web_discovery.gnmap_targets(services, target_args)
+        self.assertIn("http://10.0.0.1", targets)
+        self.assertIn("https://10.0.0.1", targets)
+        self.assertNotIn("https://10.0.0.1:4318", targets)
+        with self.assertRaisesRegex(ValueError, "max-network-endpoints"):
+            web_discovery.network_file_services(argparse.Namespace(
+                network_file=[networks], ports_file=[ports], max_network_endpoints=8,
+            ))
+
     def test_console_color_modes(self) -> None:
         colored = io.StringIO()
         web_discovery.console("OK", "finished", "always", colored)

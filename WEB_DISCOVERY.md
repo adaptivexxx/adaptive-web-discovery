@@ -111,6 +111,24 @@ python3 web_discovery.py \
   --acknowledge-authorization
 ```
 
+Probe authorized network ranges and TCP ports from files:
+
+```bash
+python3 web_discovery.py \
+  -iL networks.txt \
+  -ports ports.txt \
+  --max-network-endpoints 10000 \
+  --mode fingerprint \
+  --fingerprint-probes basic \
+  --acknowledge-authorization
+```
+
+`networks.txt` accepts one IPv4/IPv6 address or CIDR per line. `ports.txt` accepts
+comma-separated, whitespace-separated, or line-separated TCP ports and ranges such as
+`80,443,4317-4318`; `#` comments are ignored. The endpoint limit applies to the
+address/port Cartesian product and is enforced before requests are sent. Known HTTP/HTTPS
+ports and playbook hints select the likely scheme; ambiguous ports try both HTTPS and HTTP.
+
 Run API-focused discovery with controlled concurrency:
 
 ```bash
