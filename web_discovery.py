@@ -1387,10 +1387,17 @@ def write_reports(
         f'<td>{html.escape(item["evidence"])}</td><td>{html.escape(item["recommendation"])}</td></tr>'
         for item in findings
     ) or '<tr><td colspan="6">No findings</td></tr>'
+    def format_port_hints(item: dict[str, object]) -> str:
+        hints = item.get("port_hints", [])
+        return "; ".join(
+            "{} [{}]".format(hint.get("role"), hint.get("confidence", "low"))
+            for hint in hints
+        )
+
     service_rows = "".join(
         f'<tr><td>{html.escape(str(item.get("address") or ""))}</td><td>{html.escape(str(item.get("hostname") or ""))}</td>'
         f'<td>{item.get("port")}/{html.escape(str(item.get("protocol") or ""))}</td><td>{html.escape(str(item.get("service") or ""))}</td>'
-        f'<td>{html.escape(str(item.get("version") or ""))}</td><td>{html.escape("; ".join(f"{hint.get("role")} [{hint.get("confidence", "low")}]" for hint in item.get("port_hints", [])))}</td></tr>' for item in services
+        f'<td>{html.escape(str(item.get("version") or ""))}</td><td>{html.escape(format_port_hints(item))}</td></tr>' for item in services
     ) or '<tr><td colspan="6">No imported services</td></tr>'
     warning_rows = "".join(
         f'<tr><td>{html.escape(str(item.get("source") or ""))}</td><td>{html.escape(str(item.get("line") or ""))}</td>'
