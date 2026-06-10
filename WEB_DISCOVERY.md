@@ -52,9 +52,10 @@ management, ingestion, metrics, profiling, replication, gossip, and native proto
 surfaces. Port-only matches remain confidence-rated hypotheses. Native gRPC and other
 non-HTTP ports are reported without being sent to web scanners.
 
-When an imported Nmap hostname target is unreachable, the tool automatically retries the
-same scheme and port using the service IP address. Reachable IP fallbacks participate in
-smart enumeration and reporting. Use `--no-ip-fallback` to disable this behavior.
+When an imported Nmap hostname target is unreachable, the tool immediately queues the
+same scheme and port using the service IP address. IP retries are prioritized ahead of
+remaining hostname work, and reachable IP fallbacks participate in smart enumeration and
+reporting. Use `--no-ip-fallback` to disable this behavior.
 
 Endpoint-specific fingerprint failures are contained and recorded instead of stopping the
 complete run. Curl and OpenSSL output is decoded with replacement for malformed or binary

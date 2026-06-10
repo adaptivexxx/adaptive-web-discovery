@@ -20,6 +20,7 @@ import ssl
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -214,6 +215,7 @@ LEVEL_STYLES = {
     "INFO": ("blue",),
     "PHASE": ("bold", "cyan"),
     "PROGRESS": ("cyan",),
+    "RETRY": ("yellow",),
     "OK": ("green",),
     "WARN": ("yellow",),
     "ERROR": ("bold", "red"),
@@ -1638,65 +1640,58 @@ def main() -> int:
                 f" concurrency={args.host_concurrency} timeout={args.timeout}s",
                 args.color,
             )
+            fallback_targets = []
+            queued_targets = deque((target, "fingerprint", None) for target in targets)
+            scheduled_targets = set(targets)
+            completed_count = 0
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
-                future_targets = {
-                    executor.submit(
-                        fingerprint_target,
-                        target,
-                        args,
-                        signatures,
-                        follow_up,
-                        scope_policy,
-                        playbook_metadata,
-                    ): target
-                    for target in targets
-                }
-                for completed_count, future in enumerate(concurrent.futures.as_completed(future_targets), 1):
-                    try:
-                        fingerprint = future.result()
-                    except Exception as exc:
-                        fingerprint = failed_fingerprint(future_targets[future], exc, playbook_metadata)
-                    fingerprints.append(fingerprint)
-                    technologies = ",".join(fingerprint["technologies"]) or "unknown"
-                    level = "OK" if fingerprint["reachable"] else "WARN"
-                    console(
-                        level,
-                        f"fingerprint {completed_count}/{len(future_targets)}"
-                        f" | {future_targets[future]} | reachable={fingerprint['reachable']}"
-                        f" technologies={technologies}",
-                        args.color,
+                future_targets = {}
+                while queued_targets or future_targets:
+                    while queued_targets and len(future_targets) < args.host_concurrency:
+                        target, kind, source = queued_targets.popleft()
+                        future = executor.submit(
+                            fingerprint_target,
+                            target,
+                            args,
+                            signatures,
+                            follow_up,
+                            scope_policy,
+                            playbook_metadata,
+                        )
+                        future_targets[future] = (target, kind, source)
+                    done, _ = concurrent.futures.wait(
+                        future_targets,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
                     )
-            if args.ip_fallback:
-                fallbacks = ip_fallback_targets(fingerprints, discovered_services, targets)
-                if fallbacks:
-                    console("PHASE", f"Retrying {len(fallbacks)} unreachable hostname target(s) by IP address", args.color)
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
-                        future_targets = {
-                            executor.submit(
-                                fingerprint_target,
-                                target,
-                                args,
-                                signatures,
-                                follow_up,
-                                scope_policy,
-                                playbook_metadata,
-                            ): target
-                            for target in fallbacks
-                        }
-                        for completed_count, future in enumerate(concurrent.futures.as_completed(future_targets), 1):
-                            try:
-                                fingerprint = future.result()
-                            except Exception as exc:
-                                fingerprint = failed_fingerprint(future_targets[future], exc, playbook_metadata)
-                            fingerprints.append(fingerprint)
-                            level = "OK" if fingerprint["reachable"] else "WARN"
-                            console(
-                                level,
-                                f"IP fallback {completed_count}/{len(future_targets)}"
-                                f" | {future_targets[future]} | reachable={fingerprint['reachable']}",
-                                args.color,
+                    for future in done:
+                        target, kind, source = future_targets.pop(future)
+                        completed_count += 1
+                        try:
+                            fingerprint = future.result()
+                        except Exception as exc:
+                            fingerprint = failed_fingerprint(target, exc, playbook_metadata)
+                        fingerprints.append(fingerprint)
+                        technologies = ",".join(fingerprint["technologies"]) or "unknown"
+                        level = "OK" if fingerprint["reachable"] else "WARN"
+                        console(
+                            level,
+                            f"{kind} {completed_count}/{len(scheduled_targets)}"
+                            f" | {target} | reachable={fingerprint['reachable']}"
+                            f" technologies={technologies}",
+                            args.color,
+                        )
+                        if args.ip_fallback and kind == "fingerprint" and not fingerprint["reachable"]:
+                            fallbacks = ip_fallback_targets(
+                                [fingerprint],
+                                discovered_services,
+                                list(scheduled_targets),
                             )
-                    targets = list(dict.fromkeys(targets + fallbacks))
+                            for fallback in reversed(fallbacks):
+                                scheduled_targets.add(fallback)
+                                fallback_targets.append(fallback)
+                                queued_targets.appendleft((fallback, "IP fallback", target))
+                                console("RETRY", f"{target} -> {fallback}", args.color)
+            targets = list(dict.fromkeys(targets + fallback_targets))
             if args.expand_authorized_candidates:
                 expansions = candidate_targets(fingerprints, args.max_candidate_expansion)
                 if expansions:
