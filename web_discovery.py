@@ -19,6 +19,7 @@ import sqlite3
 import ssl
 import subprocess
 import sys
+import threading
 import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass
@@ -221,6 +222,7 @@ LEVEL_STYLES = {
     "ERROR": ("bold", "red"),
     "RUN": ("dim",),
 }
+CONSOLE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -336,7 +338,8 @@ def styled(text: str, styles: tuple[str, ...], mode: str, stream: object = sys.s
 
 def console(level: str, message: str, mode: str = "auto", stream: object = sys.stdout) -> None:
     label = styled(f"[{level}]", LEVEL_STYLES.get(level, ()), mode, stream)
-    print(f"{label} {message}", file=stream, flush=True)
+    with CONSOLE_LOCK:
+        print(f"{label} {message}", file=stream, flush=True)
 
 
 def positive_int(value: str) -> int:
@@ -755,6 +758,14 @@ def nmap_discovery_command(network: str, ports: str, output_base: Path, args: ar
     return command + extra + ["-p", ports] + output_args + [network]
 
 
+def command_error_summary(result: dict[str, object]) -> str:
+    text = str(result.get("stderr") or result.get("stdout") or "").strip()
+    if not text:
+        return "no diagnostic output"
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
+    return " | ".join(lines[-3:] if lines else [text])[:360]
+
+
 def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Path], list[dict[str, object]]]:
     network_files = args.network_file or []
     port_files = args.ports_file or []
@@ -787,6 +798,12 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
         f" scan-type={args.nmap_scan_type} min-rate={args.nmap_min_rate}",
         args.color,
     )
+    if args.nmap_scan_type == "syn" and hasattr(os, "geteuid") and os.geteuid() != 0:
+        console(
+            "WARN",
+            "SYN scan (-sS) usually requires root or CAP_NET_RAW/CAP_NET_ADMIN; use sudo or -sT if workers fail",
+            args.color,
+        )
 
     def scan(job: tuple[str, Path]) -> dict[str, object]:
         network, output_base = job
@@ -816,12 +833,22 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
             console(
                 level,
                 f"Nmap {completed_count}/{len(futures)} | {result['network']}"
-                f" | returncode={result['returncode']}",
+                f" | returncode={result['returncode']}"
+                + (f" | {command_error_summary(result)}" if result["returncode"] not in (None, 0) else ""),
                 args.color,
             )
     if not args.dry_run:
         (run_dir / "nmap-discovery.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
-    outputs = [Path(result["output"]) for result in results if result["returncode"] in (None, 0)]
+    outputs = [
+        Path(result["output"]) for result in results
+        if result["returncode"] in (None, 0) and (args.dry_run or Path(result["output"]).is_file())
+    ]
+    failures = [result for result in results if result["returncode"] not in (None, 0)]
+    if not args.dry_run and not outputs:
+        detail = command_error_summary(failures[0]) if failures else "no XML output was produced"
+        raise ValueError(f"all Nmap discovery workers failed; first error: {detail}")
+    if failures:
+        console("WARN", f"Nmap discovery completed with {len(failures)}/{len(results)} failed worker(s)", args.color)
     return outputs, results
 
 

@@ -9,6 +9,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import web_discovery
@@ -48,6 +49,26 @@ class DiscoveryTests(unittest.TestCase):
         args.nmap_extra_args = "-oA forbidden"
         with self.assertRaisesRegex(ValueError, "tool-managed"):
             web_discovery.nmap_discovery_command("10.0.0.0/24", "80", Path("/tmp/network"), args)
+
+    def test_nmap_discovery_stops_when_all_workers_fail(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        networks = root / "networks.txt"
+        ports = root / "ports.txt"
+        networks.write_text("10.0.0.0/30\n", encoding="utf-8")
+        ports.write_text("80,443\n", encoding="utf-8")
+        args = argparse.Namespace(
+            network_file=[networks], ports_file=[ports], dry_run=False, color="never",
+            nmap_workers=1, nmap_scan_type="syn", nmap_min_rate=500,
+            nmap_max_retries=2, nmap_host_timeout="10m", nmap_min_hostgroup=None,
+            nmap_timing="4", nmap_version_detection=True, nmap_default_scripts=False,
+            nmap_host_discovery=False, nmap_extra_args="", nmap_output_format="all",
+            nmap_output_all_name="prod-scan", nmap_output_name="scan",
+        )
+        failed = SimpleNamespace(returncode=1, stdout="", stderr="TCP/IP fingerprinting requires root privileges.\nQUITTING!\n")
+        with patch.object(web_discovery.shutil, "which", return_value="/usr/bin/nmap"), patch.object(web_discovery.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(ValueError, "all Nmap discovery workers failed"):
+                web_discovery.run_nmap_discovery(args, root / "run")
+        self.assertTrue((root / "run" / "nmap-discovery.json").is_file())
 
     def test_native_nmap_cli_flags(self) -> None:
         args = web_discovery.parser().parse_args([
