@@ -70,6 +70,30 @@ class DiscoveryTests(unittest.TestCase):
                 web_discovery.run_nmap_discovery(args, root / "run")
         self.assertTrue((root / "run" / "nmap-discovery.json").is_file())
 
+    def test_nmap_discovery_resume_reuses_existing_xml(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        networks = root / "networks.txt"
+        ports = root / "ports.txt"
+        run_dir = root / "run"
+        output_dir = run_dir / "nmap-discovery"
+        output_dir.mkdir(parents=True)
+        networks.write_text("10.0.0.0/30\n", encoding="utf-8")
+        ports.write_text("80\n", encoding="utf-8")
+        (output_dir / "prod-scan-0001.xml").write_text('<?xml version="1.0"?><nmaprun/>', encoding="utf-8")
+        args = argparse.Namespace(
+            network_file=[networks], ports_file=[ports], dry_run=False, color="never",
+            nmap_workers=1, nmap_scan_type="connect", nmap_min_rate=500,
+            nmap_max_retries=2, nmap_host_timeout="10m", nmap_min_hostgroup=None,
+            nmap_timing="4", nmap_version_detection=True, nmap_default_scripts=False,
+            nmap_host_discovery=False, nmap_extra_args="", nmap_output_format="all",
+            nmap_output_all_name="prod-scan", nmap_output_name="scan", resume=run_dir,
+        )
+        with patch.object(web_discovery.shutil, "which", return_value="/usr/bin/nmap"), patch.object(web_discovery.subprocess, "run") as run:
+            outputs, results = web_discovery.run_nmap_discovery(args, run_dir)
+        run.assert_not_called()
+        self.assertEqual(outputs, [output_dir / "prod-scan-0001.xml"])
+        self.assertTrue(results[0]["resumed"])
+
     def test_native_nmap_cli_flags(self) -> None:
         args = web_discovery.parser().parse_args([
             "-iL", "networks.txt", "-ports", "ports.txt", "-sS", "-sC", "-sV", "-Pn",
@@ -119,6 +143,35 @@ class DiscoveryTests(unittest.TestCase):
         plain = io.StringIO()
         web_discovery.console("ERROR", "failed", "never", plain)
         self.assertEqual(plain.getvalue(), "[ERROR] failed\n")
+
+    def test_scan_profiles_preserve_explicit_options(self) -> None:
+        args = web_discovery.parser().parse_args([
+            "-iL", "networks.txt", "-ports", "ports.txt",
+            "--scan-profile", "balanced", "--min-rate", "900", "--profile", "api",
+        ])
+        web_discovery.apply_scan_profile(args, [
+            "-iL", "networks.txt", "-ports", "ports.txt",
+            "--scan-profile", "balanced", "--min-rate", "900", "--profile", "api",
+        ])
+        self.assertEqual(args.nmap_min_rate, 900)
+        self.assertEqual(args.profile, "api")
+        self.assertEqual(args.nmap_workers, 8)
+        self.assertEqual(args.host_concurrency, 20)
+
+    def test_preflight_summary_estimates_network_work(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        networks = root / "networks.txt"
+        ports = root / "ports.txt"
+        networks.write_text("10.0.0.0/30\n10.0.0.9\n", encoding="utf-8")
+        ports.write_text("80,443\n", encoding="utf-8")
+        args = argparse.Namespace(
+            scan_profile="balanced", network_discovery="nmap", network_file=[networks],
+            ports_file=[ports], nmap_workers=4, nmap_min_rate=500,
+        )
+        summary = web_discovery.preflight_summary(args)
+        self.assertEqual(summary["estimated_hosts"], 3)
+        self.assertEqual(summary["estimated_tcp_probes"], 6)
+        self.assertEqual(summary["aggregate_min_rate"], 2000)
 
     def test_scope_policy(self) -> None:
         policy = {

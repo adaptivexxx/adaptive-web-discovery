@@ -223,6 +223,23 @@ LEVEL_STYLES = {
     "RUN": ("dim",),
 }
 CONSOLE_LOCK = threading.Lock()
+SCAN_PROFILES = {
+    "cautious": {
+        "nmap_workers": 4, "nmap_min_rate": 200, "nmap_min_hostgroup": 64,
+        "nmap_timing": "3", "nmap_default_scripts": False, "fingerprint_probes": "basic",
+        "host_concurrency": 10, "threads": 10, "rate": 20, "profile": "quick",
+    },
+    "balanced": {
+        "nmap_workers": 8, "nmap_min_rate": 500, "nmap_min_hostgroup": 256,
+        "nmap_timing": "4", "nmap_default_scripts": False, "fingerprint_probes": "basic",
+        "host_concurrency": 20, "threads": 20, "rate": 50, "profile": "default",
+    },
+    "aggressive": {
+        "nmap_workers": 12, "nmap_min_rate": 1000, "nmap_min_hostgroup": 1024,
+        "nmap_timing": "4", "nmap_default_scripts": True, "fingerprint_probes": "extensive",
+        "host_concurrency": 40, "threads": 40, "rate": 100, "profile": "deep",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -275,6 +292,9 @@ def parser() -> argparse.ArgumentParser:
         help="Treat every imported open TCP port as HTTP and HTTPS candidates",
     )
     p.add_argument("--mode", choices=("smart", "fingerprint", "enumerate"), default="smart")
+    p.add_argument("--scan-profile", choices=tuple(SCAN_PROFILES), help="Apply cautious, balanced, or aggressive operational defaults")
+    p.add_argument("--resume", type=Path, help="Resume an existing run directory")
+    p.add_argument("--preflight-only", action="store_true", help="Validate inputs and print estimates without scanning")
     p.add_argument("--tool", choices=("auto", "ffuf", "gobuster"), default="auto")
     p.add_argument("--profile", choices=tuple(PROFILES), default="default")
     p.add_argument("-w", "--wordlist", action="append", type=Path, help="Custom wordlist; repeatable")
@@ -340,6 +360,79 @@ def console(level: str, message: str, mode: str = "auto", stream: object = sys.s
     label = styled(f"[{level}]", LEVEL_STYLES.get(level, ()), mode, stream)
     with CONSOLE_LOCK:
         print(f"{label} {message}", file=stream, flush=True)
+
+
+def apply_scan_profile(args: argparse.Namespace, argv: list[str]) -> None:
+    if not args.scan_profile:
+        return
+    explicit = set(argv)
+    aliases = {
+        "nmap_workers": {"--nmap-workers"},
+        "nmap_min_rate": {"--nmap-min-rate", "--min-rate"},
+        "nmap_min_hostgroup": {"--nmap-min-hostgroup", "--min-hostgroup"},
+        "nmap_timing": {"--nmap-timing", "-T0", "-T1", "-T2", "-T3", "-T4", "-T5"},
+        "nmap_default_scripts": {"--nmap-default-scripts", "-sC"},
+        "fingerprint_probes": {"--fingerprint-probes"},
+        "host_concurrency": {"--host-concurrency"},
+        "threads": {"--threads", "-t"},
+        "rate": {"--rate"},
+        "profile": {"--profile"},
+    }
+    for name, value in SCAN_PROFILES[args.scan_profile].items():
+        if not explicit.intersection(aliases[name]):
+            setattr(args, name, value)
+
+
+def write_checkpoint(run_dir: Path, stage: str, status: str, **details: object) -> None:
+    path = run_dir / "checkpoint.json"
+    state = {}
+    if path.is_file():
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            state = {}
+    state.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+    state.setdefault("stages", {})[stage] = {"status": status, **details}
+    path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
+def preflight_summary(args: argparse.Namespace) -> dict[str, object]:
+    summary: dict[str, object] = {"scan_profile": args.scan_profile, "network_discovery": args.network_discovery}
+    if args.network_file:
+        networks = read_network_specs(args.network_file)
+        ports = read_port_files(args.ports_file or [])
+        host_count = sum(max(1, network.num_addresses - (2 if network.version == 4 and network.num_addresses > 2 else 0)) for network in map(ipaddress.ip_network, networks))
+        summary.update({
+            "networks": len(networks),
+            "estimated_hosts": host_count,
+            "ports": len(ports),
+            "estimated_tcp_probes": host_count * len(ports),
+            "nmap_workers": args.nmap_workers,
+            "aggregate_min_rate": args.nmap_workers * args.nmap_min_rate,
+        })
+    return summary
+
+
+def print_preflight(args: argparse.Namespace, summary: dict[str, object]) -> None:
+    console("PHASE", "Preflight", args.color)
+    console("INFO", " ".join(f"{key}={value}" for key, value in summary.items() if value is not None), args.color)
+    if int(summary.get("estimated_tcp_probes", 0)) > 100_000_000:
+        console("WARN", "estimated TCP probe volume exceeds 100 million", args.color)
+    if args.nmap_default_scripts and int(summary.get("estimated_hosts", 0)) > 4096:
+        console("WARN", "-sC across more than 4096 estimated hosts may significantly increase traffic and duration", args.color)
+
+
+def serializable_args(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        key: (
+            [str(item) for item in value] if isinstance(value, list)
+            else str(value) if isinstance(value, Path)
+            else value
+        )
+        for key, value in vars(args).items()
+        if key not in {"header", "cookie", "proxy"}
+    }
 
 
 def positive_int(value: str) -> int:
@@ -790,11 +883,24 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
         (network, output_dir / f"{output_name}-{index:04d}")
         for index, network in enumerate(networks, 1)
     ]
+    reused = []
+    pending_jobs = []
+    for network, output_base in jobs:
+        xml_output = output_base.with_suffix(".xml")
+        if getattr(args, "resume", None) and xml_output.is_file():
+            parsed, issues = parse_nmap_xml_detailed(xml_output)
+            if parsed or not issues:
+                reused.append({
+                    "network": network, "output": str(xml_output), "output_base": str(output_base),
+                    "command": [], "returncode": 0, "resumed": True,
+                })
+                continue
+        pending_jobs.append((network, output_base))
     port_spec = compact_ports(ports)
     console("PHASE", "Parallel Nmap network discovery", args.color)
     console(
         "INFO",
-        f"networks={len(networks)} ports={len(ports)} workers={args.nmap_workers}"
+        f"networks={len(networks)} pending={len(pending_jobs)} reused={len(reused)} ports={len(ports)} workers={args.nmap_workers}"
         f" scan-type={args.nmap_scan_type} min-rate={args.nmap_min_rate}",
         args.color,
     )
@@ -823,9 +929,9 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
             "stderr": completed.stderr[-4096:],
         }
 
-    results = []
+    results = list(reused)
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.nmap_workers) as executor:
-        futures = [executor.submit(scan, job) for job in jobs]
+        futures = [executor.submit(scan, job) for job in pending_jobs]
         for completed_count, future in enumerate(concurrent.futures.as_completed(futures), 1):
             result = future.result()
             results.append(result)
@@ -839,6 +945,11 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
             )
     if not args.dry_run:
         (run_dir / "nmap-discovery.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+        write_checkpoint(
+            run_dir, "nmap_discovery", "completed",
+            workers=len(results), reused=len(reused),
+            failures=sum(result["returncode"] not in (None, 0) for result in results),
+        )
     outputs = [
         Path(result["output"]) for result in results
         if result["returncode"] in (None, 0) and (args.dry_run or Path(result["output"]).is_file())
@@ -1890,6 +2001,7 @@ q.oninput=filter;s.onchange=filter;
 def main() -> int:
     argument_parser = parser()
     args = argument_parser.parse_args()
+    apply_scan_profile(args, sys.argv[1:])
     if args.list_technologies or args.list_port_intelligence or args.validate_playbooks:
         try:
             paths, signatures, follow_up, explicit_only, metadata = load_catalog(args)
@@ -1923,16 +2035,39 @@ def main() -> int:
                 f" follow_up={len(follow_up)} explicit_only={len(explicit_only)}"
             )
         return 0
-    if not args.url and not args.input and not args.network_file and not args.ports_file and not args.gnmap and not args.nmap and not args.nmap_xml:
+    if not args.url and not args.input and not args.network_file and not args.ports_file and not args.gnmap and not args.nmap and not args.nmap_xml and not args.resume:
         argument_parser.error("at least one target source is required unless listing or validating catalog data")
-    if not args.dry_run and not args.acknowledge_authorization:
+    if not args.dry_run and not args.preflight_only and not args.acknowledge_authorization:
         console("ERROR", "pass --acknowledge-authorization before executing scans", args.color, sys.stderr)
         return 2
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = args.output.expanduser().resolve() / timestamp
+    run_dir = args.resume.expanduser().resolve() if args.resume else args.output.expanduser().resolve() / timestamp
+    if args.resume and not run_dir.is_dir():
+        console("ERROR", f"resume directory does not exist: {run_dir}", args.color, sys.stderr)
+        return 2
     nmap_discovery_results = []
     try:
+        if args.resume and not any((args.url, args.input, args.network_file, args.gnmap, args.nmap, args.nmap_xml)):
+            resumed_xml = sorted((run_dir / "nmap-discovery").glob("*.xml"))
+            if resumed_xml:
+                args.nmap_xml = resumed_xml
+            elif (run_dir / "fingerprints.json").is_file():
+                args.url = [
+                    str(item["target"])
+                    for item in json.loads((run_dir / "fingerprints.json").read_text(encoding="utf-8"))
+                ]
         technology_paths, signatures, follow_up, explicit_only, playbook_metadata = load_catalog(args)
+        preflight = preflight_summary(args)
+        print_preflight(args, preflight)
+        if args.preflight_only:
+            return 0
+        if not args.dry_run:
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "run-config.json").write_text(
+                json.dumps({"arguments": serializable_args(args), "preflight": preflight}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            write_checkpoint(run_dir, "preflight", "completed", **preflight)
         if args.network_file and args.network_discovery == "nmap":
             outputs, nmap_discovery_results = run_nmap_discovery(args, run_dir)
             if args.dry_run and not any((args.url, args.input, args.gnmap, args.nmap, args.nmap_xml)):
@@ -1953,6 +2088,9 @@ def main() -> int:
         return 2
 
     fingerprints = []
+    if args.resume and (run_dir / "fingerprints.json").is_file():
+        fingerprints = json.loads((run_dir / "fingerprints.json").read_text(encoding="utf-8"))
+        console("INFO", f"resumed fingerprints={len(fingerprints)}", args.color)
     console(
         "PHASE",
         "Inventory loaded",
@@ -1985,8 +2123,9 @@ def main() -> int:
                 f" concurrency={args.host_concurrency} timeout={args.timeout}s",
                 args.color,
             )
+            completed_targets = {str(fingerprint["target"]) for fingerprint in fingerprints}
             fallback_targets = []
-            queued_targets = deque((target, "fingerprint", None) for target in targets)
+            queued_targets = deque((target, "fingerprint", None) for target in targets if target not in completed_targets)
             scheduled_targets = set(targets)
             completed_count = 0
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
@@ -2071,6 +2210,7 @@ def main() -> int:
             mark_aliases(fingerprints)
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "fingerprints.json").write_text(json.dumps(fingerprints, indent=2) + "\n", encoding="utf-8")
+            write_checkpoint(run_dir, "fingerprinting", "completed", targets=len(fingerprints))
     elif not args.dry_run:
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "fingerprints.json").write_text("[]\n", encoding="utf-8")
@@ -2081,6 +2221,8 @@ def main() -> int:
             manifest = {
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "mode": args.mode,
+                "scan_profile": args.scan_profile,
+                "preflight": preflight,
                 "scope_policy": scope_policy,
                 "nmap_discovery": nmap_discovery_results,
                 "discovered_services": discovered_services,
@@ -2120,6 +2262,8 @@ def main() -> int:
             for fingerprint in fingerprints
             if safe_for_enumeration(fingerprint)
         ]
+    if args.resume:
+        jobs = [job for job in jobs if not job.output.is_file()]
     console("PHASE", "Content enumeration", args.color)
     console(
         "INFO",
@@ -2130,6 +2274,11 @@ def main() -> int:
     )
 
     results = []
+    if args.resume and (run_dir / "manifest.json").is_file():
+        try:
+            results = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8")).get("results", [])
+        except (OSError, json.JSONDecodeError):
+            results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
         futures = [executor.submit(run_job, job, tool, args) for job in jobs]
         for completed_count, future in enumerate(concurrent.futures.as_completed(futures), 1):
@@ -2153,6 +2302,8 @@ def main() -> int:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "tool": tool,
             "mode": args.mode,
+            "scan_profile": args.scan_profile,
+            "preflight": preflight,
             "profile": args.profile,
             "scope_policy": scope_policy,
             "nmap_discovery": nmap_discovery_results,
@@ -2167,6 +2318,7 @@ def main() -> int:
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         persist_state(run_dir, fingerprints, results, discovered_services, findings, import_warnings)
         write_reports(run_dir, fingerprints, results, discovered_services, findings, import_warnings)
+        write_checkpoint(run_dir, "enumeration", "completed", jobs=len(results), failures=sum(result["returncode"] not in (None, 0) for result in results))
     failures = sum(result["returncode"] not in (None, 0) for result in results)
     level = "OK" if not failures else "WARN"
     console(level, f"completed jobs={len(results)} failures={failures}", args.color)

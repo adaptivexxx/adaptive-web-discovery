@@ -157,6 +157,20 @@ Use `--network-discovery direct` only for small inputs that should bypass Nmap. 
 expands the address/port Cartesian product, enforces `--max-network-endpoints`, and probes
 known HTTP/HTTPS schemes or both schemes for ambiguous ports.
 
+## Operational profiles and resume
+
+Use `--scan-profile cautious`, `balanced`, or `aggressive` to apply coordinated Nmap,
+fingerprinting, and enumeration defaults. Explicit options such as `-T4`, `--min-rate`,
+`--profile api`, or `--threads 30` override the selected profile.
+
+Run `--preflight-only` to validate network/port inputs and print estimated hosts, TCP
+probes, Nmap workers, and aggregate minimum packet rate without scanning.
+
+Every completed stage updates `checkpoint.json`; the effective arguments and preflight
+estimate are preserved in `run-config.json`. Resume an interrupted run with
+`--resume /path/to/existing/run` plus the original inputs. Resume reuses valid Nmap worker
+XML, completed fingerprints, and existing scanner output files.
+
 Run API-focused discovery with controlled concurrency:
 
 ```bash
