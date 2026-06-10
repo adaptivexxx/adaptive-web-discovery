@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "dex",
+  "name": "Dex",
+  "category": "identity",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for dex.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    5556
+  ],
+  "port_hints": [
+    {"port": 5556, "role": "Dex HTTP OIDC service", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 5557, "role": "Dex gRPC API", "protocol": "grpc", "web": false},
+    {"port": 5558, "role": "Dex telemetry endpoint", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "dex",
+    "dex-session"
+  ],
+  "paths": [
+    ".well-known/openid-configuration",
+    "auth",
+    "keys",
+    "healthz"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review issuer metadata, realm exposure, redirect behavior, and authentication configuration."
+  ],
+  "follow_up": [
+    "Review issuer configuration, clients, redirect URIs, realms, and administrative exposure."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

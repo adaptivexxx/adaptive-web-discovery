@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "etcd",
+  "name": "Etcd",
+  "category": "infrastructure",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for etcd.",
+  "risk": "high",
+  "explicit_only": false,
+  "protocols": [
+    "https",
+    "grpc"
+  ],
+  "typical_ports": [
+    2379,
+    2380
+  ],
+  "port_hints": [
+    {"port": 2379, "role": "etcd client API", "protocol": "grpc-http", "web": true, "scheme": "https"},
+    {"port": 2380, "role": "etcd peer replication", "protocol": "grpc", "web": false}
+  ],
+  "signatures": [
+    "etcd",
+    "etcdserver"
+  ],
+  "paths": [
+    "health",
+    "version",
+    "metrics",
+    "v2/keys",
+    "v3/kv/range"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Treat administrative and coordination-service routes as sensitive and keep checks read-only."
+  ],
+  "follow_up": [
+    "Determine whether client certificate authentication is required; avoid key enumeration without approval.",
+    "Review ACLs, authentication, encryption, and administrative exposure with approved credentials."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

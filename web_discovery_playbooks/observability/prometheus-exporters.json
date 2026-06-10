@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "prometheus-exporters",
+  "name": "Prometheus Exporters",
+  "category": "observability",
+  "description": "Common Prometheus exporter, Pushgateway, and kube-state-metrics ports.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": ["http", "https"],
+  "typical_ports": [9100, 9115, 9091, 8080, 8081],
+  "port_hints": [
+    {"port": 9100, "role": "Node Exporter metrics", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9115, "role": "Blackbox Exporter HTTP API and metrics", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9091, "role": "Prometheus Pushgateway HTTP API", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 8080, "role": "kube-state-metrics primary metrics", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 8081, "role": "kube-state-metrics telemetry", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": ["node_exporter_build_info", "kube_state_metrics_build_info", "pushgateway_build_info", "blackbox_exporter_build_info"],
+  "paths": ["metrics", "-/healthy", "-/ready", "debug/pprof/", "debug/pprof/goroutine"],
+  "automatic_actions": ["Collect bounded metrics and health-route evidence."],
+  "follow_up": ["Review whether exported labels and metrics reveal sensitive topology or workload metadata."],
+  "stop_conditions": ["Stop on explicit scope mismatch.", "Do not mutate Pushgateway metrics without explicit approval."]
+}

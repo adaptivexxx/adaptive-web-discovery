@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "vault",
+  "name": "Vault",
+  "category": "infrastructure",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for vault.",
+  "risk": "high",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    8200
+  ],
+  "port_hints": [
+    {"port": 8200, "role": "Vault HTTP API", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 8201, "role": "Vault cluster communication", "protocol": "tcp-tls", "web": false}
+  ],
+  "signatures": [
+    "x-vault-",
+    "vault"
+  ],
+  "paths": [
+    "v1/sys/health",
+    "v1/sys/seal-status",
+    "v1/sys/mounts",
+    "v1/sys/auth"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Treat administrative and coordination-service routes as sensitive and keep checks read-only."
+  ],
+  "follow_up": [
+    "Review health, seal state, auth methods, and ACLs without attempting secret access.",
+    "Review ACLs, authentication, encryption, and administrative exposure with approved credentials."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "kafka-rest",
+  "name": "Kafka Rest",
+  "category": "messaging",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for kafka-rest.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https",
+    "kafka"
+  ],
+  "typical_ports": [
+    8082
+  ],
+  "port_hints": [
+    {"port": 8082, "role": "Kafka REST Proxy HTTP API", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9092, "role": "Kafka broker plaintext", "protocol": "kafka", "web": false},
+    {"port": 9093, "role": "Kafka broker TLS", "protocol": "kafka-tls", "web": false}
+  ],
+  "signatures": [
+    "kafka",
+    "kafka-rest"
+  ],
+  "paths": [
+    "topics",
+    "brokers",
+    "v3/clusters"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review management-plane exposure without publishing, consuming, or altering messages."
+  ],
+  "follow_up": [
+    "Review virtual-host, topic, queue, ACL, and management-plane exposure using approved credentials."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

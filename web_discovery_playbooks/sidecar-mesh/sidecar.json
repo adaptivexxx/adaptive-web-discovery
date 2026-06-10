@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "sidecar",
+  "name": "Sidecar",
+  "category": "sidecar-mesh",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for sidecar.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    15000,
+    15020,
+    15021
+  ],
+  "signatures": [
+    "sidecar",
+    "proxy-sidecar"
+  ],
+  "paths": [
+    "health",
+    "ready",
+    "metrics",
+    "stats",
+    "config_dump",
+    "debug/pprof"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Determine whether the endpoint belongs to a workload sidecar, ingress gateway, or mesh control plane."
+  ],
+  "follow_up": [
+    "Identify the sidecar owner and protocol; review local admin, metrics, and identity boundaries.",
+    "Review proxy identity, mTLS, policy, admin-port exposure, and workload ownership."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

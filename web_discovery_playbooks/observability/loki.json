@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "loki",
+  "name": "Loki",
+  "category": "observability",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for loki.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    3100
+  ],
+  "port_hints": [
+    {"port": 3100, "role": "Loki HTTP API and multi-tenant query/ingestion", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9095, "role": "Loki gRPC", "protocol": "grpc", "web": false},
+    {"port": 7946, "role": "Loki memberlist gossip", "protocol": "memberlist", "web": false}
+  ],
+  "signatures": [
+    "loki",
+    "loki_build_info",
+    "x-scope-orgid"
+  ],
+  "paths": [
+    "ready",
+    "metrics",
+    "config",
+    "services",
+    "loki/api/v1/status/buildinfo",
+    "loki/api/v1/labels",
+    "loki/api/v1/series"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Identify exposed telemetry labels, service names, build information, and tenant boundaries."
+  ],
+  "follow_up": [
+    "Review whether telemetry reveals internal topology, credentials, tenant data, or sensitive labels."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

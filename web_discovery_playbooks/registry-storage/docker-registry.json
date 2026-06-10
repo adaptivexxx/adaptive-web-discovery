@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "docker-registry",
+  "name": "Docker Registry",
+  "category": "registry-storage",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for docker-registry.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    5000
+  ],
+  "port_hints": [
+    {"port": 5000, "role": "Docker Distribution registry API", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "docker-distribution-api-version"
+  ],
+  "paths": [
+    "v2/",
+    "v2/_catalog"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review anonymous listing and read permissions without uploading, deleting, or mutating artifacts."
+  ],
+  "follow_up": [
+    "Review anonymous catalog and pull permissions; do not push or mutate images.",
+    "Review anonymous catalog, artifact read access, token service behavior, and retention boundaries."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

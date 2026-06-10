@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "consul-connect",
+  "name": "Consul Connect",
+  "category": "sidecar-mesh",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for consul-connect.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    19000
+  ],
+  "signatures": [
+    "consul connect",
+    "consul-dataplane"
+  ],
+  "paths": [
+    "ready",
+    "metrics",
+    "clusters",
+    "config_dump"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Determine whether the endpoint belongs to a workload sidecar, ingress gateway, or mesh control plane."
+  ],
+  "follow_up": [
+    "Review sidecar proxy admin exposure and Consul intentions using approved credentials.",
+    "Review proxy identity, mTLS, policy, admin-port exposure, and workload ownership."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

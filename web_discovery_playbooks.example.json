@@ -1,0 +1,20 @@
+{
+  "technologies": {
+    "custom-platform": {
+      "signatures": [
+        "x-custom-platform",
+        "custom-platform-build-info"
+      ],
+      "paths": [
+        "health",
+        "ready",
+        "metrics",
+        "api/version"
+      ],
+      "follow_up": [
+        "Review the platform-specific authentication boundary using approved credentials.",
+        "Confirm whether administrative and metrics routes are intended to be externally reachable."
+      ]
+    }
+  }
+}

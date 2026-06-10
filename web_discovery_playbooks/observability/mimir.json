@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "mimir",
+  "name": "Mimir",
+  "category": "observability",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for mimir.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    8080
+  ],
+  "port_hints": [
+    {"port": 8080, "role": "Mimir HTTP API and management", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9095, "role": "Mimir gRPC", "protocol": "grpc", "web": false},
+    {"port": 7946, "role": "Mimir memberlist gossip", "protocol": "memberlist", "web": false}
+  ],
+  "signatures": [
+    "mimir",
+    "cortex_build_info"
+  ],
+  "paths": [
+    "ready",
+    "metrics",
+    "config",
+    "services",
+    "api/v1/status/buildinfo",
+    "prometheus/api/v1/status/buildinfo"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Identify exposed telemetry labels, service names, build information, and tenant boundaries."
+  ],
+  "follow_up": [
+    "Review whether telemetry reveals internal topology, credentials, tenant data, or sensitive labels."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

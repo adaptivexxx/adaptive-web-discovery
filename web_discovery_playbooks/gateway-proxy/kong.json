@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "kong",
+  "name": "Kong",
+  "category": "gateway-proxy",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for kong.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    8001,
+    8444
+  ],
+  "port_hints": [
+    {"port": 8000, "role": "Kong proxy HTTP", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 8443, "role": "Kong proxy HTTPS", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 8001, "role": "Kong Admin API HTTP", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 8444, "role": "Kong Admin API HTTPS", "protocol": "https", "web": true, "scheme": "https"}
+  ],
+  "signatures": [
+    "server: kong",
+    "x-kong-"
+  ],
+  "paths": [
+    "status",
+    "status/ready",
+    "metrics",
+    "routes",
+    "services",
+    "plugins"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Compare gateway routes, upstream clues, and administrative exposure without modifying configuration."
+  ],
+  "follow_up": [
+    "Review administrative interfaces, route exposure, upstream leakage, and authentication policy."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

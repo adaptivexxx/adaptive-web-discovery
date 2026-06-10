@@ -1,0 +1,17 @@
+{
+  "domains": {
+    "include": [
+      "example.com",
+      "*.example.com"
+    ],
+    "exclude": [
+      "billing.example.com"
+    ]
+  },
+  "cidrs": {
+    "include": [
+      "10.20.0.0/16"
+    ],
+    "exclude": []
+  }
+}

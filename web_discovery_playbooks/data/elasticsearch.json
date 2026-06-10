@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "elasticsearch",
+  "name": "Elasticsearch",
+  "category": "data",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for elasticsearch.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    9200
+  ],
+  "port_hints": [
+    {"port": 9200, "role": "Elasticsearch HTTP API", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9300, "role": "Elasticsearch transport", "protocol": "tcp", "web": false}
+  ],
+  "signatures": [
+    "x-elastic-product",
+    "cluster_name",
+    "you know, for search"
+  ],
+  "paths": [
+    "_cluster/health",
+    "_cluster/state",
+    "_cat",
+    "_cat/indices",
+    "_nodes",
+    "_nodes/http"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review anonymous metadata and health exposure without querying application data."
+  ],
+  "follow_up": [
+    "Review anonymous metadata, access controls, transport security, and administrative endpoints."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

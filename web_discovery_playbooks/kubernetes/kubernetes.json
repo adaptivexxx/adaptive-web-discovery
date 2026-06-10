@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "id": "kubernetes",
+  "name": "Kubernetes",
+  "category": "kubernetes",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for kubernetes.",
+  "risk": "high",
+  "explicit_only": false,
+  "protocols": [
+    "https"
+  ],
+  "typical_ports": [
+    6443
+  ],
+  "port_hints": [
+    {"port": 6443, "role": "Kubernetes API server HTTPS", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 10250, "role": "Kubelet HTTPS API", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 10257, "role": "kube-controller-manager secure metrics", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 10259, "role": "kube-scheduler secure metrics", "protocol": "https", "web": true, "scheme": "https"}
+  ],
+  "port_ranges": [
+    {"start": 30000, "end": 32767, "role": "Default Kubernetes NodePort range", "protocol": "unknown", "web": false}
+  ],
+  "signatures": [
+    "kubernetes",
+    "audit-id",
+    "x-kubernetes-pf-",
+    "apis/apps/v1"
+  ],
+  "paths": [
+    "api",
+    "api/v1",
+    "apis",
+    "apis/apps/v1",
+    "apis/batch/v1",
+    "healthz",
+    "livez",
+    "readyz",
+    "metrics",
+    "version",
+    "openapi/v2",
+    "openapi/v3"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Record control-plane or runtime evidence and require explicit approval before credential-aware discovery."
+  ],
+  "follow_up": [
+    "Validate identity and RBAC with approved credentials; inspect API discovery and exposed OpenAPI.",
+    "Use approved identities for RBAC and resource-discovery review; do not infer permission from endpoint reachability."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

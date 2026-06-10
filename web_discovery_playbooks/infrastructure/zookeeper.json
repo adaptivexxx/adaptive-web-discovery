@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "zookeeper",
+  "name": "Apache ZooKeeper",
+  "category": "infrastructure",
+  "description": "ZooKeeper client, quorum, election, and administrative port intelligence.",
+  "risk": "high",
+  "explicit_only": false,
+  "protocols": ["zookeeper", "http", "tcp"],
+  "typical_ports": [2181, 2888, 3888, 8080],
+  "port_hints": [
+    {"port": 2181, "role": "ZooKeeper client protocol", "protocol": "zookeeper", "web": false},
+    {"port": 2888, "role": "ZooKeeper quorum communication", "protocol": "tcp", "web": false},
+    {"port": 3888, "role": "ZooKeeper leader election", "protocol": "tcp", "web": false},
+    {"port": 8080, "role": "ZooKeeper AdminServer HTTP", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": ["zookeeper", "mntr", "ruok"],
+  "paths": ["commands", "commands/health", "commands/server_stats"],
+  "automatic_actions": ["Collect bounded HTTP AdminServer evidence when present."],
+  "follow_up": ["Review client ACLs and administrative exposure using approved read-only checks."],
+  "stop_conditions": ["Stop on explicit scope mismatch.", "Do not modify znodes or cluster state."]
+}

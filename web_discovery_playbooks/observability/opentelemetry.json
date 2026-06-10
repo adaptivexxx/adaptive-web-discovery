@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "id": "opentelemetry",
+  "name": "Opentelemetry",
+  "category": "observability",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for opentelemetry.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https",
+    "grpc",
+    "grpc-tls"
+  ],
+  "typical_ports": [
+    4317,
+    4318
+  ],
+  "port_hints": [
+    {"port": 4317, "role": "OTLP/gRPC ingestion", "protocol": "grpc", "web": false},
+    {"port": 4318, "role": "OTLP/HTTP ingestion", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 55680, "role": "Legacy OTLP/gRPC ingestion", "protocol": "grpc", "web": false},
+    {"port": 55681, "role": "Legacy OTLP/HTTP ingestion", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 8888, "role": "Collector internal metrics", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 8889, "role": "Prometheus exporter", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 13133, "role": "Health check extension", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 1777, "role": "pprof extension", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 55679, "role": "zPages extension", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "opentelemetry",
+    "otel",
+    "application/x-protobuf"
+  ],
+  "paths": [
+    "v1/traces",
+    "v1/metrics",
+    "v1/logs",
+    "metrics",
+    "debug/tracez",
+    "debug/pipelinez",
+    "debug/extensionz",
+    "debug/featurez"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Identify exposed telemetry labels, service names, build information, and tenant boundaries."
+  ],
+  "follow_up": [
+    "Validate OTLP/HTTP and OTLP/gRPC separately with a non-sensitive test signal.",
+    "Review whether telemetry reveals internal topology, credentials, tenant data, or sensitive labels."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

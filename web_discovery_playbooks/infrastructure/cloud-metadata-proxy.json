@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "cloud-metadata-proxy",
+  "name": "Cloud Metadata Proxy",
+  "category": "infrastructure",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for cloud-metadata-proxy.",
+  "risk": "high",
+  "explicit_only": true,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    80
+  ],
+  "signatures": [
+    "metadata-flavor",
+    "meta-data"
+  ],
+  "paths": [
+    "latest/meta-data/",
+    "metadata/instance",
+    "computeMetadata/v1/"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Treat administrative and coordination-service routes as sensitive and keep checks read-only."
+  ],
+  "follow_up": [
+    "Treat metadata-looking routes as high risk; do not attempt credential retrieval.",
+    "Review ACLs, authentication, encryption, and administrative exposure with approved credentials."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

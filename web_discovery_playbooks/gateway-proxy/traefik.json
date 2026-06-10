@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "traefik",
+  "name": "Traefik",
+  "category": "gateway-proxy",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for traefik.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    8080
+  ],
+  "port_hints": [
+    {"port": 8080, "role": "Traefik dashboard and API", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9000, "role": "Traefik metrics or management entrypoint", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "traefik"
+  ],
+  "paths": [
+    "ping",
+    "api/rawdata",
+    "api/http/routers",
+    "api/http/services",
+    "dashboard/"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Compare gateway routes, upstream clues, and administrative exposure without modifying configuration."
+  ],
+  "follow_up": [
+    "Review administrative interfaces, route exposure, upstream leakage, and authentication policy."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

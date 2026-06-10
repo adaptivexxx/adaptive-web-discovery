@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "container-runtime",
+  "name": "Container Runtime",
+  "category": "kubernetes",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for container-runtime.",
+  "risk": "high",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    10250
+  ],
+  "port_hints": [
+    {"port": 2375, "role": "Docker Engine API plaintext", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 2376, "role": "Docker Engine API TLS", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 10248, "role": "Kubelet health endpoint", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 10255, "role": "Legacy kubelet read-only HTTP API", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "containerd",
+    "cri-o",
+    "dockerd"
+  ],
+  "paths": [
+    "metrics",
+    "debug/pprof",
+    "debug/pprof/goroutine",
+    "version"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Record control-plane or runtime evidence and require explicit approval before credential-aware discovery."
+  ],
+  "follow_up": [
+    "Use approved identities for RBAC and resource-discovery review; do not infer permission from endpoint reachability."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

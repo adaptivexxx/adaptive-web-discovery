@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "id": "generic-api",
+  "name": "Generic Api",
+  "category": "api",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for generic-api.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    80,
+    443
+  ],
+  "signatures": [],
+  "paths": [
+    "api",
+    "api/v1",
+    "api/v2",
+    "openapi.json",
+    "openapi.yaml",
+    "swagger.json",
+    "swagger-ui",
+    "swagger-ui/index.html",
+    "api-docs",
+    "v2/api-docs",
+    "v3/api-docs",
+    "graphql",
+    "graphiql",
+    "health",
+    "healthz",
+    "ready",
+    "readyz",
+    "live",
+    "livez",
+    "metrics",
+    "status",
+    ".well-known/openid-configuration"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Compare discovered routes with published API documentation and authentication requirements."
+  ],
+  "follow_up": [
+    "Review documented methods, schemas, authentication, authorization, and versioning manually."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

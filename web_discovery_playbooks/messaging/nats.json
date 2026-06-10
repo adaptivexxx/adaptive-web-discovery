@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "nats",
+  "name": "NATS",
+  "category": "messaging",
+  "description": "NATS client, monitoring, clustering, and gateway port intelligence.",
+  "risk": "high",
+  "explicit_only": false,
+  "protocols": ["http", "nats", "tcp"],
+  "typical_ports": [4222, 8222, 6222, 7522],
+  "port_hints": [
+    {"port": 4222, "role": "NATS client protocol", "protocol": "nats", "web": false},
+    {"port": 8222, "role": "NATS HTTP monitoring", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 6222, "role": "NATS cluster routing", "protocol": "tcp", "web": false},
+    {"port": 7522, "role": "NATS gateway", "protocol": "tcp", "web": false}
+  ],
+  "signatures": ["nats-server", "varz", "connz", "routez"],
+  "paths": ["varz", "connz", "routez", "subsz", "gatewayz", "healthz"],
+  "automatic_actions": ["Collect bounded monitoring endpoint evidence."],
+  "follow_up": ["Review monitoring exposure and authentication without publishing or consuming messages."],
+  "stop_conditions": ["Stop on explicit scope mismatch.", "Do not publish, subscribe, or modify stream state."]
+}

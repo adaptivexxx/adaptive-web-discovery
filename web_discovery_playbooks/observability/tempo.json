@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "tempo",
+  "name": "Tempo",
+  "category": "observability",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for tempo.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    3200
+  ],
+  "port_hints": [
+    {"port": 3200, "role": "Tempo HTTP API and administrative interface", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9095, "role": "Tempo internal gRPC", "protocol": "grpc", "web": false},
+    {"port": 4317, "role": "OTLP/gRPC trace ingestion", "protocol": "grpc", "web": false},
+    {"port": 4318, "role": "OTLP/HTTP trace ingestion", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9411, "role": "Zipkin trace ingestion", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 14268, "role": "Jaeger Thrift HTTP ingestion", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "tempo",
+    "tempo_build_info"
+  ],
+  "paths": [
+    "ready",
+    "metrics",
+    "api/status/buildinfo",
+    "api/search",
+    "api/echo"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Identify exposed telemetry labels, service names, build information, and tenant boundaries."
+  ],
+  "follow_up": [
+    "Review whether telemetry reveals internal topology, credentials, tenant data, or sensitive labels."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

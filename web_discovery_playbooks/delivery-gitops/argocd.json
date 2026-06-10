@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "argocd",
+  "name": "Argocd",
+  "category": "delivery-gitops",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for argocd.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    443
+  ],
+  "port_hints": [
+    {"port": 443, "role": "Argo CD HTTPS UI, API, and gRPC-web", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 8080, "role": "Argo CD HTTP UI and API", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "argocd",
+    "argo cd"
+  ],
+  "paths": [
+    "api/version",
+    "api/v1/applications",
+    "api/v1/clusters",
+    "auth/login"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review anonymous visibility and authentication boundaries without triggering jobs or synchronization."
+  ],
+  "follow_up": [
+    "Review repository, deployment, credential, and administrative visibility using approved credentials."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

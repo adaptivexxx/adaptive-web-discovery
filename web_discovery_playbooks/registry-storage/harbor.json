@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "harbor",
+  "name": "Harbor",
+  "category": "registry-storage",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for harbor.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    443
+  ],
+  "port_hints": [
+    {"port": 443, "role": "Harbor HTTPS UI and API", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 4443, "role": "Harbor internal HTTPS", "protocol": "https", "web": true, "scheme": "https"}
+  ],
+  "signatures": [
+    "harbor"
+  ],
+  "paths": [
+    "api/v2.0/health",
+    "api/v2.0/projects",
+    "api/v2.0/systeminfo",
+    "service/token"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review anonymous listing and read permissions without uploading, deleting, or mutating artifacts."
+  ],
+  "follow_up": [
+    "Review anonymous catalog, artifact read access, token service behavior, and retention boundaries."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

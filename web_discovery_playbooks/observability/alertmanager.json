@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "alertmanager",
+  "name": "Alertmanager",
+  "category": "observability",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for alertmanager.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    9093
+  ],
+  "port_hints": [
+    {"port": 9093, "role": "Alertmanager HTTP API and UI", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9094, "role": "Alertmanager cluster gossip", "protocol": "tcp-udp", "web": false}
+  ],
+  "signatures": [
+    "alertmanager",
+    "alertmanager_build_info"
+  ],
+  "paths": [
+    "-/healthy",
+    "-/ready",
+    "api/v2/status",
+    "api/v2/alerts",
+    "metrics"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Identify exposed telemetry labels, service names, build information, and tenant boundaries."
+  ],
+  "follow_up": [
+    "Review whether telemetry reveals internal topology, credentials, tenant data, or sensitive labels."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

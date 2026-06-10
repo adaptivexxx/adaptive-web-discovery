@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "id": "istio",
+  "name": "Istio",
+  "category": "sidecar-mesh",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for istio.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    15000,
+    15021
+  ],
+  "port_hints": [
+    {"port": 15000, "role": "Istio Envoy administrative interface", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 15020, "role": "Istio agent status and metrics", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 15021, "role": "Istio health status", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 15090, "role": "Istio Envoy Prometheus metrics", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "istio",
+    "istio-proxy"
+  ],
+  "paths": [
+    "healthz/ready",
+    "stats/prometheus",
+    "config_dump",
+    "clusters",
+    "listeners",
+    "server_info"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Determine whether the endpoint belongs to a workload sidecar, ingress gateway, or mesh control plane."
+  ],
+  "follow_up": [
+    "Identify proxy sidecars and ingress gateways; review mesh auth policies and exposed proxy admin routes.",
+    "Review proxy identity, mTLS, policy, admin-port exposure, and workload ownership."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

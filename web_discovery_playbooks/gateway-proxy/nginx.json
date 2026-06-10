@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "nginx",
+  "name": "Nginx",
+  "category": "gateway-proxy",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for nginx.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    80,
+    443
+  ],
+  "signatures": [
+    "server: nginx"
+  ],
+  "paths": [
+    "nginx_status",
+    "status",
+    "stub_status"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Compare gateway routes, upstream clues, and administrative exposure without modifying configuration."
+  ],
+  "follow_up": [
+    "Review administrative interfaces, route exposure, upstream leakage, and authentication policy."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

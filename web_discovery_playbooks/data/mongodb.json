@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "mongodb",
+  "name": "Mongodb",
+  "category": "data",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for mongodb.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    9216
+  ],
+  "port_hints": [
+    {"port": 27017, "role": "MongoDB native protocol", "protocol": "mongodb", "web": false},
+    {"port": 9216, "role": "MongoDB exporter metrics", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "mongodb",
+    "mongodb_up"
+  ],
+  "paths": [
+    "metrics",
+    "serverStatus"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review anonymous metadata and health exposure without querying application data."
+  ],
+  "follow_up": [
+    "Review anonymous metadata, access controls, transport security, and administrative endpoints."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

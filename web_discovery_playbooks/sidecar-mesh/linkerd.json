@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "id": "linkerd",
+  "name": "Linkerd",
+  "category": "sidecar-mesh",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for linkerd.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    4191
+  ],
+  "port_hints": [
+    {"port": 4191, "role": "Linkerd proxy administrative interface", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 8086, "role": "Linkerd identity service", "protocol": "grpc", "web": false},
+    {"port": 8089, "role": "Linkerd destination service", "protocol": "grpc", "web": false}
+  ],
+  "signatures": [
+    "linkerd",
+    "l5d-"
+  ],
+  "paths": [
+    "ready",
+    "metrics",
+    "proxy-log-level",
+    "tap"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Determine whether the endpoint belongs to a workload sidecar, ingress gateway, or mesh control plane."
+  ],
+  "follow_up": [
+    "Validate Linkerd proxy/admin exposure and mTLS identity boundaries.",
+    "Review proxy identity, mTLS, policy, admin-port exposure, and workload ownership."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

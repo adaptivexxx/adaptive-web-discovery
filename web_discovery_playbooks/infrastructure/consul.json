@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "id": "consul",
+  "name": "Consul",
+  "category": "infrastructure",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for consul.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    8500,
+    8501
+  ],
+  "port_hints": [
+    {"port": 8500, "role": "Consul HTTP API and UI", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 8501, "role": "Consul HTTPS API and UI", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 8502, "role": "Consul gRPC API", "protocol": "grpc", "web": false},
+    {"port": 8503, "role": "Consul gRPC TLS API", "protocol": "grpc-tls", "web": false},
+    {"port": 8300, "role": "Consul server RPC", "protocol": "tcp", "web": false},
+    {"port": 8301, "role": "Consul LAN gossip", "protocol": "tcp-udp", "web": false},
+    {"port": 8302, "role": "Consul WAN gossip", "protocol": "tcp-udp", "web": false},
+    {"port": 8600, "role": "Consul DNS", "protocol": "tcp-udp", "web": false}
+  ],
+  "signatures": [
+    "consul",
+    "x-consul-"
+  ],
+  "paths": [
+    "v1/status/leader",
+    "v1/status/peers",
+    "v1/catalog/services",
+    "v1/agent/self",
+    "v1/health/state/any"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Treat administrative and coordination-service routes as sensitive and keep checks read-only."
+  ],
+  "follow_up": [
+    "Review ACLs, authentication, encryption, and administrative exposure with approved credentials."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

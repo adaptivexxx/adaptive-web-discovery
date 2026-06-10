@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "playbooks": [
+    {
+      "id": "alertmanager",
+      "category": "observability",
+      "path": "observability/alertmanager.json"
+    },
+    {
+      "id": "apache-apisix",
+      "category": "gateway-proxy",
+      "path": "gateway-proxy/apache-apisix.json"
+    },
+    {
+      "id": "argocd",
+      "category": "delivery-gitops",
+      "path": "delivery-gitops/argocd.json"
+    },
+    {
+      "id": "cloud-metadata-proxy",
+      "category": "infrastructure",
+      "path": "infrastructure/cloud-metadata-proxy.json"
+    },
+    {
+      "id": "consul",
+      "category": "infrastructure",
+      "path": "infrastructure/consul.json"
+    },
+    {
+      "id": "consul-connect",
+      "category": "sidecar-mesh",
+      "path": "sidecar-mesh/consul-connect.json"
+    },
+    {
+      "id": "container-runtime",
+      "category": "kubernetes",
+      "path": "kubernetes/container-runtime.json"
+    },
+    {
+      "id": "dex",
+      "category": "identity",
+      "path": "identity/dex.json"
+    },
+    {
+      "id": "docker-registry",
+      "category": "registry-storage",
+      "path": "registry-storage/docker-registry.json"
+    },
+    {
+      "id": "elasticsearch",
+      "category": "data",
+      "path": "data/elasticsearch.json"
+    },
+    {
+      "id": "envoy",
+      "category": "sidecar-mesh",
+      "path": "sidecar-mesh/envoy.json"
+    },
+    {
+      "id": "etcd",
+      "category": "infrastructure",
+      "path": "infrastructure/etcd.json"
+    },
+    {
+      "id": "feature-flags",
+      "category": "application-platform",
+      "path": "application-platform/feature-flags.json"
+    },
+    {
+      "id": "flux",
+      "category": "delivery-gitops",
+      "path": "delivery-gitops/flux.json"
+    },
+    {
+      "id": "generic-api",
+      "category": "api",
+      "path": "api/generic-api.json"
+    },
+    {
+      "id": "gitlab",
+      "category": "delivery-gitops",
+      "path": "delivery-gitops/gitlab.json"
+    },
+    {
+      "id": "grafana",
+      "category": "observability",
+      "path": "observability/grafana.json"
+    },
+    {
+      "id": "grpc",
+      "category": "api",
+      "path": "api/grpc.json"
+    },
+    {
+      "id": "haproxy",
+      "category": "gateway-proxy",
+      "path": "gateway-proxy/haproxy.json"
+    },
+    {
+      "id": "harbor",
+      "category": "registry-storage",
+      "path": "registry-storage/harbor.json"
+    },
+    {
+      "id": "istio",
+      "category": "sidecar-mesh",
+      "path": "sidecar-mesh/istio.json"
+    },
+    {
+      "id": "jaeger",
+      "category": "observability",
+      "path": "observability/jaeger.json"
+    },
+    {
+      "id": "jenkins",
+      "category": "delivery-gitops",
+      "path": "delivery-gitops/jenkins.json"
+    },
+    {
+      "id": "kafka-rest",
+      "category": "messaging",
+      "path": "messaging/kafka-rest.json"
+    },
+    {
+      "id": "keycloak",
+      "category": "identity",
+      "path": "identity/keycloak.json"
+    },
+    {
+      "id": "kong",
+      "category": "gateway-proxy",
+      "path": "gateway-proxy/kong.json"
+    },
+    {
+      "id": "kubernetes",
+      "category": "kubernetes",
+      "path": "kubernetes/kubernetes.json"
+    },
+    {
+      "id": "linkerd",
+      "category": "sidecar-mesh",
+      "path": "sidecar-mesh/linkerd.json"
+    },
+    {
+      "id": "loki",
+      "category": "observability",
+      "path": "observability/loki.json"
+    },
+    {
+      "id": "mimir",
+      "category": "observability",
+      "path": "observability/mimir.json"
+    },
+    {
+      "id": "minio",
+      "category": "registry-storage",
+      "path": "registry-storage/minio.json"
+    },
+    {
+      "id": "mongodb",
+      "category": "data",
+      "path": "data/mongodb.json"
+    },
+    {
+      "id": "nginx",
+      "category": "gateway-proxy",
+      "path": "gateway-proxy/nginx.json"
+    },
+    {
+      "id": "oauth-proxy",
+      "category": "sidecar-mesh",
+      "path": "sidecar-mesh/oauth-proxy.json"
+    },
+    {
+      "id": "opentelemetry",
+      "category": "observability",
+      "path": "observability/opentelemetry.json"
+    },
+    {
+      "id": "postgres-exporter",
+      "category": "observability",
+      "path": "observability/postgres-exporter.json"
+    },
+    {
+      "id": "prometheus",
+      "category": "observability",
+      "path": "observability/prometheus.json"
+    },
+    {
+      "id": "pyroscope",
+      "category": "observability",
+      "path": "observability/pyroscope.json"
+    },
+    {
+      "id": "rabbitmq",
+      "category": "messaging",
+      "path": "messaging/rabbitmq.json"
+    },
+    {
+      "id": "redis",
+      "category": "data",
+      "path": "data/redis.json"
+    },
+    {
+      "id": "sidecar",
+      "category": "sidecar-mesh",
+      "path": "sidecar-mesh/sidecar.json"
+    },
+    {
+      "id": "spring",
+      "category": "api",
+      "path": "api/spring.json"
+    },
+    {
+      "id": "tempo",
+      "category": "observability",
+      "path": "observability/tempo.json"
+    },
+    {
+      "id": "thanos",
+      "category": "observability",
+      "path": "observability/thanos.json"
+    },
+    {
+      "id": "traefik",
+      "category": "gateway-proxy",
+      "path": "gateway-proxy/traefik.json"
+    },
+    {
+      "id": "vault",
+      "category": "infrastructure",
+      "path": "infrastructure/vault.json"
+    },
+    {
+      "id": "zipkin",
+      "category": "observability",
+      "path": "observability/zipkin.json"
+    }
+  ]
+}

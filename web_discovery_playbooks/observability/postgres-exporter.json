@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "postgres-exporter",
+  "name": "Postgres Exporter",
+  "category": "observability",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for postgres-exporter.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    9187
+  ],
+  "port_hints": [
+    {"port": 9187, "role": "PostgreSQL exporter metrics", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "pg_up",
+    "postgres_exporter"
+  ],
+  "paths": [
+    "metrics"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Identify exposed telemetry labels, service names, build information, and tenant boundaries."
+  ],
+  "follow_up": [
+    "Review whether telemetry reveals internal topology, credentials, tenant data, or sensitive labels."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

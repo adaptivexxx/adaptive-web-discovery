@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "gitlab",
+  "name": "Gitlab",
+  "category": "delivery-gitops",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for gitlab.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    443
+  ],
+  "port_hints": [
+    {"port": 443, "role": "GitLab HTTPS UI and API", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 8150, "role": "GitLab Workhorse internal API", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "gitlab",
+    "_gitlab_session"
+  ],
+  "paths": [
+    "-/health",
+    "-/readiness",
+    "-/metrics",
+    "api/v4/version",
+    "api/v4/projects"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review anonymous visibility and authentication boundaries without triggering jobs or synchronization."
+  ],
+  "follow_up": [
+    "Review repository, deployment, credential, and administrative visibility using approved credentials."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

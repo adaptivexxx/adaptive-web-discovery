@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "minio",
+  "name": "Minio",
+  "category": "registry-storage",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for minio.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    9000,
+    9001
+  ],
+  "port_hints": [
+    {"port": 9000, "role": "MinIO S3 API", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 9001, "role": "MinIO administrative console", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "minio",
+    "x-minio-"
+  ],
+  "paths": [
+    "minio/health/live",
+    "minio/health/ready",
+    "minio/v2/metrics/cluster"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review anonymous listing and read permissions without uploading, deleting, or mutating artifacts."
+  ],
+  "follow_up": [
+    "Review anonymous catalog, artifact read access, token service behavior, and retention boundaries."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

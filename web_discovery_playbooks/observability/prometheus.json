@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "prometheus",
+  "name": "Prometheus",
+  "category": "observability",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for prometheus.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    9090
+  ],
+  "port_hints": [
+    {"port": 9090, "role": "Prometheus HTTP API and UI", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "prometheus",
+    "prometheus_build_info",
+    "promhttp_metric_handler"
+  ],
+  "paths": [
+    "-/healthy",
+    "-/ready",
+    "api/v1/status/buildinfo",
+    "api/v1/status/config",
+    "api/v1/targets",
+    "api/v1/rules",
+    "api/v1/alerts",
+    "metrics"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Identify exposed telemetry labels, service names, build information, and tenant boundaries."
+  ],
+  "follow_up": [
+    "Review whether telemetry reveals internal topology, credentials, tenant data, or sensitive labels."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

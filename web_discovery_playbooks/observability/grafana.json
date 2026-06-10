@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "grafana",
+  "name": "Grafana",
+  "category": "observability",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for grafana.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    3000
+  ],
+  "port_hints": [
+    {"port": 3000, "role": "Grafana HTTP UI and API", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "grafana",
+    "grafana_session",
+    "x-grafana"
+  ],
+  "paths": [
+    "api/health",
+    "api/frontend/settings",
+    "api/datasources",
+    "api/search",
+    "api/admin/stats",
+    "login",
+    "public/build/manifest.json"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Identify exposed telemetry labels, service names, build information, and tenant boundaries."
+  ],
+  "follow_up": [
+    "Review whether telemetry reveals internal topology, credentials, tenant data, or sensitive labels."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

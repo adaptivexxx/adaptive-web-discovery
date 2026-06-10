@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "feature-flags",
+  "name": "Feature Flags",
+  "category": "application-platform",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for feature-flags.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    4242
+  ],
+  "signatures": [
+    "unleash",
+    "flagsmith"
+  ],
+  "paths": [
+    "health",
+    "ready",
+    "metrics",
+    "api/admin/projects",
+    "api/client/features"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review administrative API exposure and environment-specific authentication controls."
+  ],
+  "follow_up": [
+    "Review tenant separation, administrative APIs, and authentication boundaries."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

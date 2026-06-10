@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "envoy",
+  "name": "Envoy",
+  "category": "sidecar-mesh",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for envoy.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    9901
+  ],
+  "port_hints": [
+    {"port": 9901, "role": "Envoy administrative interface", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "envoy",
+    "x-envoy-"
+  ],
+  "paths": [
+    "ready",
+    "server_info",
+    "stats",
+    "stats/prometheus",
+    "clusters",
+    "listeners",
+    "config_dump"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Determine whether the endpoint belongs to a workload sidecar, ingress gateway, or mesh control plane."
+  ],
+  "follow_up": [
+    "Review whether the Envoy admin interface is exposed; inspect config_dump only when explicitly authorized.",
+    "Review proxy identity, mTLS, policy, admin-port exposure, and workload ownership."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "redis",
+  "name": "Redis",
+  "category": "data",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for redis.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "redis"
+  ],
+  "typical_ports": [
+    9121
+  ],
+  "port_hints": [
+    {"port": 6379, "role": "Redis native protocol", "protocol": "redis", "web": false},
+    {"port": 9121, "role": "Redis exporter metrics", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "redis",
+    "redis_exporter"
+  ],
+  "paths": [
+    "metrics"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review anonymous metadata and health exposure without querying application data."
+  ],
+  "follow_up": [
+    "Review anonymous metadata, access controls, transport security, and administrative endpoints."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

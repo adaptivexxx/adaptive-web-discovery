@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "oauth-proxy",
+  "name": "Oauth Proxy",
+  "category": "sidecar-mesh",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for oauth-proxy.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    4180
+  ],
+  "port_hints": [
+    {"port": 4180, "role": "OAuth2 Proxy HTTP service", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "oauth2_proxy",
+    "oauth2-proxy"
+  ],
+  "paths": [
+    "oauth2/sign_in",
+    "oauth2/auth",
+    "ping",
+    "ready"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Determine whether the endpoint belongs to a workload sidecar, ingress gateway, or mesh control plane."
+  ],
+  "follow_up": [
+    "Review proxy identity, mTLS, policy, admin-port exposure, and workload ownership."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

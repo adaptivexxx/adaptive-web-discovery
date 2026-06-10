@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "id": "thanos",
+  "name": "Thanos",
+  "category": "observability",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for thanos.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    10902
+  ],
+  "port_hints": [
+    {"port": 10901, "role": "Thanos StoreAPI gRPC", "protocol": "grpc", "web": false},
+    {"port": 10902, "role": "Thanos HTTP management, metrics, and profiling", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 19291, "role": "Thanos Receive remote-write HTTP", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 19391, "role": "Thanos Receive Cap'n Proto replication", "protocol": "capnproto", "web": false}
+  ],
+  "signatures": [
+    "thanos",
+    "thanos_build_info"
+  ],
+  "paths": [
+    "-/healthy",
+    "-/ready",
+    "api/v1/status",
+    "api/v1/stores",
+    "api/v1/query",
+    "metrics",
+    "debug/pprof/",
+    "debug/pprof/goroutine",
+    "debug/pprof/heap",
+    "debug/pprof/profile"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Identify exposed telemetry labels, service names, build information, and tenant boundaries."
+  ],
+  "follow_up": [
+    "Review whether telemetry reveals internal topology, credentials, tenant data, or sensitive labels."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}

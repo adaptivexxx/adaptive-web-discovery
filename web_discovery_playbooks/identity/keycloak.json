@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "keycloak",
+  "name": "Keycloak",
+  "category": "identity",
+  "description": "Evidence and authorized read-only HTTP discovery guidance for keycloak.",
+  "risk": "medium",
+  "explicit_only": false,
+  "protocols": [
+    "http",
+    "https"
+  ],
+  "typical_ports": [
+    8080,
+    8443
+  ],
+  "port_hints": [
+    {"port": 8080, "role": "Keycloak HTTP UI and API", "protocol": "http", "web": true, "scheme": "http"},
+    {"port": 8443, "role": "Keycloak HTTPS UI and API", "protocol": "https", "web": true, "scheme": "https"},
+    {"port": 9000, "role": "Keycloak management interface", "protocol": "http", "web": true, "scheme": "http"}
+  ],
+  "signatures": [
+    "keycloak",
+    "kc_session"
+  ],
+  "paths": [
+    "realms/master",
+    "realms/master/.well-known/openid-configuration",
+    "admin/master/console/"
+  ],
+  "automatic_actions": [
+    "Collect bounded HTTP response evidence.",
+    "Record authentication boundaries and non-success statuses.",
+    "Prioritize these routes before broad wordlist enumeration.",
+    "Review issuer metadata, realm exposure, redirect behavior, and authentication configuration."
+  ],
+  "follow_up": [
+    "Review issuer configuration, clients, redirect URIs, realms, and administrative exposure."
+  ],
+  "stop_conditions": [
+    "Stop on explicit scope mismatch.",
+    "Stop or reduce request rate when throttling or instability is detected.",
+    "Do not perform mutations, authentication bypass, or destructive actions."
+  ]
+}
