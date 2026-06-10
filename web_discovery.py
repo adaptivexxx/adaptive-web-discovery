@@ -10,6 +10,7 @@ import hashlib
 import html
 import ipaddress
 import json
+import os
 import re
 import shlex
 import shutil
@@ -199,6 +200,26 @@ BUNDLED_PLAYBOOKS = Path(__file__).with_name("web_discovery_playbooks")
 DEFAULT_HTTP_PORTS = {80, 3000, 5000, 8000, 8001, 8080, 8081, 8082, 8088, 8888, 9000, 9090, 9093, 9180, 9200, 9411}
 DEFAULT_HTTPS_PORTS = {443, 2379, 4191, 5556, 6443, 8200, 8443, 8444, 10250, 15021}
 
+ANSI = {
+    "reset": "\033[0m",
+    "bold": "\033[1m",
+    "cyan": "\033[36m",
+    "green": "\033[32m",
+    "yellow": "\033[33m",
+    "red": "\033[31m",
+    "blue": "\033[34m",
+    "dim": "\033[2m",
+}
+LEVEL_STYLES = {
+    "INFO": ("blue",),
+    "PHASE": ("bold", "cyan"),
+    "PROGRESS": ("cyan",),
+    "OK": ("green",),
+    "WARN": ("yellow",),
+    "ERROR": ("bold", "red"),
+    "RUN": ("dim",),
+}
+
 
 @dataclass(frozen=True)
 class Job:
@@ -254,12 +275,36 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--extra-args", default="", help="Additional backend arguments, parsed with shell quoting")
     p.add_argument("-o", "--output", type=Path, default=Path("web-discovery-results"))
     p.add_argument("--dry-run", action="store_true", help="Print commands without executing")
+    p.add_argument("--color", choices=("auto", "always", "never"), default="auto", help="Console color mode")
+    p.add_argument(
+        "--no-color", action="store_const", const="never", dest="color",
+        default=argparse.SUPPRESS, help="Disable console colors",
+    )
     p.add_argument(
         "--acknowledge-authorization",
         action="store_true",
         help="Confirm you are authorized to scan every supplied target",
     )
     return p
+
+
+def colors_enabled(mode: str, stream: object = sys.stdout) -> bool:
+    if mode == "always":
+        return True
+    if mode == "never" or os.environ.get("NO_COLOR") is not None:
+        return False
+    return bool(getattr(stream, "isatty", lambda: False)())
+
+
+def styled(text: str, styles: tuple[str, ...], mode: str, stream: object = sys.stdout) -> str:
+    if not colors_enabled(mode, stream):
+        return text
+    return "".join(ANSI[style] for style in styles) + text + ANSI["reset"]
+
+
+def console(level: str, message: str, mode: str = "auto", stream: object = sys.stdout) -> None:
+    label = styled(f"[{level}]", LEVEL_STYLES.get(level, ()), mode, stream)
+    print(f"{label} {message}", file=stream, flush=True)
 
 
 def positive_int(value: str) -> int:
@@ -1002,7 +1047,7 @@ def gobuster_command(job: Job, args: argparse.Namespace) -> list[str]:
     if args.recursion:
         raise ValueError("--recursion is supported by ffuf but not gobuster")
     if args.rate:
-        print("warning: gobuster does not support --rate; continuing without a rate limit", file=sys.stderr)
+        console("WARN", "gobuster does not support --rate; continuing without a rate limit", args.color, sys.stderr)
     cmd = [
         "gobuster", "dir", "-u", job.target, "-w", str(job.wordlist),
         "-t", str(args.threads), "--timeout", f"{args.timeout}s",
@@ -1026,7 +1071,7 @@ def gobuster_command(job: Job, args: argparse.Namespace) -> list[str]:
 def run_job(job: Job, tool: str, args: argparse.Namespace) -> dict[str, object]:
     command = ffuf_command(job, args) if tool == "ffuf" else gobuster_command(job, args)
     safe_command = redact_command(command)
-    print("+", shlex.join(safe_command), flush=True)
+    console("RUN", shlex.join(safe_command), args.color)
     if args.dry_run:
         return {"target": job.target, "wordlist": str(job.wordlist), "command": safe_command, "returncode": None}
     job.output.parent.mkdir(parents=True, exist_ok=True)
@@ -1435,7 +1480,7 @@ def main() -> int:
         try:
             paths, signatures, follow_up, explicit_only, metadata = load_catalog(args)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            print(f"error: {exc}", file=sys.stderr)
+            console("ERROR", str(exc), args.color, sys.stderr)
             return 2
         if args.list_technologies:
             for name in sorted(paths):
@@ -1467,7 +1512,7 @@ def main() -> int:
     if not args.url and not args.input and not args.gnmap and not args.nmap and not args.nmap_xml:
         argument_parser.error("at least one target source is required unless listing or validating catalog data")
     if not args.dry_run and not args.acknowledge_authorization:
-        print("error: pass --acknowledge-authorization before executing scans", file=sys.stderr)
+        console("ERROR", "pass --acknowledge-authorization before executing scans", args.color, sys.stderr)
         return 2
     try:
         technology_paths, signatures, follow_up, explicit_only, playbook_metadata = load_catalog(args)
@@ -1480,31 +1525,43 @@ def main() -> int:
             else ("ffuf" if args.tool == "auto" else args.tool)
         )
     except (OSError, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        console("ERROR", str(exc), args.color, sys.stderr)
         return 2
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = args.output.expanduser().resolve() / timestamp
     fingerprints = []
-    print(
-        f"imported targets={len(targets)} services={len(discovered_services)}"
-        f" warnings={len(import_warnings)} mode={args.mode}",
-        flush=True,
+    console(
+        "PHASE",
+        "Inventory loaded",
+        args.color,
+    )
+    console(
+        "INFO",
+        f"targets={len(targets)} services={len(discovered_services)}"
+        f" import-warnings={len(import_warnings)} mode={args.mode} profile={args.profile}",
+        args.color,
     )
     if not args.dry_run:
-        print(f"output={run_dir}", flush=True)
+        console("INFO", f"results will be written to {run_dir}", args.color)
     if not args.dry_run:
         run_dir.mkdir(parents=True, exist_ok=True)
         write_port_catalog(run_dir, playbook_metadata)
     if args.mode in {"smart", "fingerprint"}:
         if args.dry_run:
-            print(f"dry-run: would fingerprint {len(targets)} target(s) with {args.fingerprint_probes} probes")
+            console(
+                "INFO",
+                f"dry run: would fingerprint {len(targets)} target(s) with {args.fingerprint_probes} probes",
+                args.color,
+            )
         else:
             probe_count = len(FINGERPRINT_PROBES) if args.fingerprint_probes == "extensive" else 4
-            print(
-                f"fingerprinting targets={len(targets)} probes-per-target={probe_count}"
+            console("PHASE", "Fingerprinting targets", args.color)
+            console(
+                "INFO",
+                f"targets={len(targets)} probes-per-target={probe_count}"
                 f" concurrency={args.host_concurrency} timeout={args.timeout}s",
-                flush=True,
+                args.color,
             )
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
                 future_targets = {
@@ -1523,16 +1580,18 @@ def main() -> int:
                     fingerprint = future.result()
                     fingerprints.append(fingerprint)
                     technologies = ",".join(fingerprint["technologies"]) or "unknown"
-                    print(
-                        f"fingerprint-progress={completed_count}/{len(future_targets)}"
-                        f" target={future_targets[future]} reachable={fingerprint['reachable']}"
+                    level = "OK" if fingerprint["reachable"] else "WARN"
+                    console(
+                        level,
+                        f"fingerprint {completed_count}/{len(future_targets)}"
+                        f" | {future_targets[future]} | reachable={fingerprint['reachable']}"
                         f" technologies={technologies}",
-                        flush=True,
+                        args.color,
                     )
             if args.expand_authorized_candidates:
                 expansions = candidate_targets(fingerprints, args.max_candidate_expansion)
                 if expansions:
-                    print(f"expanding authorized candidates={len(expansions)}", flush=True)
+                    console("PHASE", f"Expanding {len(expansions)} authorized candidate(s)", args.color)
                     with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
                         future_targets = {
                             executor.submit(
@@ -1549,10 +1608,12 @@ def main() -> int:
                         for completed_count, future in enumerate(concurrent.futures.as_completed(future_targets), 1):
                             fingerprint = future.result()
                             fingerprints.append(fingerprint)
-                            print(
-                                f"candidate-progress={completed_count}/{len(future_targets)}"
-                                f" target={future_targets[future]} reachable={fingerprint['reachable']}",
-                                flush=True,
+                            level = "OK" if fingerprint["reachable"] else "WARN"
+                            console(
+                                level,
+                                f"candidate {completed_count}/{len(future_targets)}"
+                                f" | {future_targets[future]} | reachable={fingerprint['reachable']}",
+                                args.color,
                             )
                     targets = list(dict.fromkeys(targets + expansions))
             mark_aliases(fingerprints)
@@ -1579,7 +1640,10 @@ def main() -> int:
             (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
             persist_state(run_dir, fingerprints, [], discovered_services, findings, import_warnings)
             write_reports(run_dir, fingerprints, [], discovered_services, findings, import_warnings)
-        print(f"completed={len(targets)} failures={failures}" + (f" output={run_dir}" if not args.dry_run else ""))
+        level = "OK" if not failures else "WARN"
+        console(level, f"completed targets={len(targets)} failures={failures}", args.color)
+        if not args.dry_run:
+            console("OK", f"HTML report: {run_dir / 'report.html'}", args.color)
         return 1 if failures else 0
 
     extension = "json" if tool == "ffuf" else "txt"
@@ -1603,7 +1667,14 @@ def main() -> int:
             for fingerprint in fingerprints
             if safe_for_enumeration(fingerprint)
         ]
-    print(f"tool={tool} targets={len(enumeration_targets)} wordlists={len(wordlists)} jobs={len(jobs)}")
+    console("PHASE", "Content enumeration", args.color)
+    console(
+        "INFO",
+        f"tool={tool} targets={len(enumeration_targets)} wordlists={len(wordlists)}"
+        f" jobs={len(jobs)} concurrency={args.host_concurrency} threads={args.threads}"
+        + (f" rate={args.rate}/s" if args.rate else ""),
+        args.color,
+    )
 
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
@@ -1612,13 +1683,15 @@ def main() -> int:
             try:
                 result = future.result()
                 results.append(result)
-                print(
-                    f"job-progress={completed_count}/{len(futures)}"
-                    f" target={result.get('target', 'unknown')} returncode={result.get('returncode')}",
-                    flush=True,
+                level = "OK" if result.get("returncode") in (None, 0) else "WARN"
+                console(
+                    level,
+                    f"job {completed_count}/{len(futures)}"
+                    f" | {result.get('target', 'unknown')} | returncode={result.get('returncode')}",
+                    args.color,
                 )
             except ValueError as exc:
-                print(f"error: {exc}", file=sys.stderr)
+                console("ERROR", str(exc), args.color, sys.stderr)
                 results.append({"returncode": 2, "error": str(exc)})
 
     if not args.dry_run:
@@ -1641,7 +1714,10 @@ def main() -> int:
         persist_state(run_dir, fingerprints, results, discovered_services, findings, import_warnings)
         write_reports(run_dir, fingerprints, results, discovered_services, findings, import_warnings)
     failures = sum(result["returncode"] not in (None, 0) for result in results)
-    print(f"completed={len(results)} failures={failures}" + (f" output={run_dir}" if not args.dry_run else ""))
+    level = "OK" if not failures else "WARN"
+    console(level, f"completed jobs={len(results)} failures={failures}", args.color)
+    if not args.dry_run:
+        console("OK", f"HTML report: {run_dir / 'report.html'}", args.color)
     return 1 if failures else 0
 
 

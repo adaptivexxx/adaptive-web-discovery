@@ -195,3 +195,9 @@ Nessus-style `report.html`.
 
 Recursive discovery is available with `ffuf`. Gobuster does not expose an equivalent
 recursive directory mode, and does not support the per-process `--rate` limit.
+
+## Console output
+
+Operational output uses color-coded phase, progress, success, warning, error, and command
+labels when stdout is connected to a terminal. Use `--color always` when running through
+tools that hide TTY detection, or `--no-color` / `NO_COLOR=1` for plain log files.

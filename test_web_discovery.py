@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import sqlite3
 import tempfile
 import unittest
@@ -23,6 +24,16 @@ SAMPLE = (
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_console_color_modes(self) -> None:
+        colored = io.StringIO()
+        web_discovery.console("OK", "finished", "always", colored)
+        self.assertIn("\033[32m", colored.getvalue())
+        self.assertIn("[OK] finished", colored.getvalue().replace("\033[32m", "").replace("\033[0m", ""))
+
+        plain = io.StringIO()
+        web_discovery.console("ERROR", "failed", "never", plain)
+        self.assertEqual(plain.getvalue(), "[ERROR] failed\n")
+
     def test_scope_policy(self) -> None:
         policy = {
             "domains": {"include": ["*.example.com"], "exclude": ["billing.example.com"]},
