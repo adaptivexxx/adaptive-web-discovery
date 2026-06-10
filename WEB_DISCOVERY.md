@@ -61,6 +61,11 @@ Endpoint-specific fingerprint failures are contained and recorded instead of sto
 complete run. Curl and OpenSSL output is decoded with replacement for malformed or binary
 response bytes.
 
+Console and report reachability distinguish HTTP response reachability from TCP transport
+reachability. `http=no tcp=yes` means the port accepted a TCP connection but the bounded
+GET probes returned no HTTP status; confirm protocol, TLS, virtual host, and request method
+before protocol-aware follow-up. Only `http=yes` targets continue into web enumeration.
+
 ## Examples
 
 Preview a default scan without sending requests:

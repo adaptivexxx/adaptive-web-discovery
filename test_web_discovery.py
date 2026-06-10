@@ -178,6 +178,18 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn("UnicodeDecodeError", fingerprint["error"])
         self.assertTrue(any(action["type"] == "stop" for action in fingerprint["actions"]))
 
+    def test_reachability_summary_distinguishes_tcp_from_http(self) -> None:
+        fingerprint = {
+            "probes": [{"status": None, "error": "curl: (52) Empty reply from server"}],
+            "transport": {"reachable": True, "error": None},
+        }
+        self.assertEqual(
+            web_discovery.reachability_summary(fingerprint),
+            "http=no tcp=yes reason=curl: (52) Empty reply from server",
+        )
+        fingerprint["probes"] = [{"status": 405, "error": ""}]
+        self.assertEqual(web_discovery.reachability_summary(fingerprint), "http=yes statuses=405")
+
     def test_port_intelligence(self) -> None:
         args = argparse.Namespace(playbooks=[], technology=[])
         _, _, _, _, metadata = web_discovery.load_catalog(args)

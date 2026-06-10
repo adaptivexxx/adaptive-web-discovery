@@ -833,6 +833,36 @@ def curl_probe(target: str, path: str, args: argparse.Namespace) -> dict[str, ob
     }
 
 
+def tcp_probe(target: str, timeout: int) -> dict[str, object]:
+    parsed = urlparse(target)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return {"reachable": True, "host": host, "port": port, "error": None}
+    except OSError as exc:
+        return {"reachable": False, "host": host, "port": port, "error": str(exc)}
+
+
+def reachability_summary(fingerprint: dict[str, object]) -> str:
+    statuses = sorted({
+        int(probe["status"]) for probe in fingerprint.get("probes", [])
+        if probe.get("status") is not None
+    })
+    if statuses:
+        return "http=yes statuses=" + ",".join(map(str, statuses))
+    transport = fingerprint.get("transport", {})
+    summary = f"http=no tcp={'yes' if transport.get('reachable') else 'no'}"
+    errors = [
+        str(probe.get("error")).strip() for probe in fingerprint.get("probes", [])
+        if probe.get("error")
+    ]
+    error = errors[0] if errors else transport.get("error")
+    if error:
+        summary += " reason=" + re.sub(r"\s+", " ", str(error))[:140]
+    return summary
+
+
 def openssl_fingerprint(host: str, port: int, timeout: int) -> dict[str, object] | None:
     if not shutil.which("openssl"):
         return None
@@ -944,11 +974,16 @@ def make_actions(
 ) -> list[dict[str, object]]:
     actions = []
     if not fingerprint.get("reachable"):
+        transport_reachable = bool(fingerprint.get("transport", {}).get("reachable"))
         actions.append({
             "technology": None,
             "type": "stop",
             "risk": "medium",
-            "action": "Target was unreachable; verify DNS, routing, port, protocol, and assessment scope manually.",
+            "action": (
+                "TCP port accepted a connection but no HTTP status was returned; verify protocol, TLS, virtual host, and request method."
+                if transport_reachable else
+                "Target was unreachable; verify DNS, routing, port, protocol, and assessment scope manually."
+            ),
         })
     for technology, evidence in fingerprint["technologies"].items():
         playbook = playbook_metadata.get(technology, {})
@@ -1002,9 +1037,19 @@ def fingerprint_target(
         if probe.get("status") in {200, 204, 301, 302, 307, 401, 403}
     ]
     wildcard_response = any(successful_hashes.count(value) >= 3 for value in set(successful_hashes))
+    http_reachable = any(probe.get("status") is not None for probe in probes)
+    parsed_target = urlparse(target)
+    transport = {
+        "reachable": True,
+        "host": parsed_target.hostname,
+        "port": parsed_target.port or (443 if parsed_target.scheme == "https" else 80),
+        "error": None,
+    } if http_reachable else tcp_probe(target, args.timeout)
     fingerprint = {
         "target": target,
-        "reachable": any(probe.get("status") is not None for probe in probes),
+        "reachable": http_reachable,
+        "http_reachable": http_reachable,
+        "transport": transport,
         "server": server[-1].strip() if server else None,
         "powered_by": powered_by[-1].strip() if powered_by else None,
         "tls": tls,
@@ -1033,6 +1078,8 @@ def failed_fingerprint(
     fingerprint = {
         "target": target,
         "reachable": False,
+        "http_reachable": False,
+        "transport": {"reachable": False, "error": str(error)},
         "server": None,
         "powered_by": None,
         "tls": {"error": str(error)},
@@ -1210,7 +1257,18 @@ def derive_findings(
     for fingerprint in fingerprints:
         target = str(fingerprint["target"])
         if not fingerprint.get("reachable"):
-            findings.append({"severity": "info", "title": "Target unreachable", "target": target, "technology": None, "evidence": "No fingerprint probe returned an HTTP status.", "recommendation": "Verify routing, protocol, port, and scope."})
+            transport_reachable = bool(fingerprint.get("transport", {}).get("reachable"))
+            findings.append({
+                "severity": "info",
+                "title": "TCP reachable without HTTP response" if transport_reachable else "Target unreachable",
+                "target": target,
+                "technology": None,
+                "evidence": reachability_summary(fingerprint),
+                "recommendation": (
+                    "Verify expected protocol, TLS, virtual host, and request method before protocol-aware follow-up."
+                    if transport_reachable else "Verify routing, protocol, port, and scope."
+                ),
+            })
         if fingerprint.get("wildcard_response"):
             findings.append({"severity": "medium", "title": "Wildcard or soft-404 behavior detected", "target": target, "technology": None, "evidence": "Multiple unrelated probe paths returned identical successful responses.", "recommendation": "Calibrate scanner filters before interpreting enumeration results."})
         if any(probe["analysis"]["rate_limited"] for probe in fingerprint.get("probes", [])):
@@ -1676,7 +1734,7 @@ def main() -> int:
                         console(
                             level,
                             f"{kind} {completed_count}/{len(scheduled_targets)}"
-                            f" | {target} | reachable={fingerprint['reachable']}"
+                            f" | {target} | {reachability_summary(fingerprint)}"
                             f" technologies={technologies}",
                             args.color,
                         )
@@ -1719,7 +1777,7 @@ def main() -> int:
                             console(
                                 level,
                                 f"candidate {completed_count}/{len(future_targets)}"
-                                f" | {future_targets[future]} | reachable={fingerprint['reachable']}",
+                                f" | {future_targets[future]} | {reachability_summary(fingerprint)}",
                                 args.color,
                             )
                     targets = list(dict.fromkeys(targets + expansions))
