@@ -153,6 +153,31 @@ class DiscoveryTests(unittest.TestCase):
         args = argparse.Namespace(http_ports="80", https_ports="8443", nmap_all_open_ports=False)
         self.assertIn("https://api.example.com:8443", web_discovery.gnmap_targets(services, args))
 
+    def test_ip_fallback_targets_only_for_unreachable_hostnames(self) -> None:
+        services = [
+            {"address": "10.0.0.12", "hostname": "api.example.com", "port": 8443},
+            {"address": "2001:db8::12", "hostname": "v6.example.com", "port": 443},
+        ]
+        fingerprints = [
+            {"target": "https://api.example.com:8443", "reachable": False},
+            {"target": "https://v6.example.com", "reachable": False},
+            {"target": "https://healthy.example.com", "reachable": True},
+        ]
+        fallbacks = web_discovery.ip_fallback_targets(fingerprints, services, [])
+        self.assertIn("https://10.0.0.12:8443", fallbacks)
+        self.assertIn("https://[2001:db8::12]", fallbacks)
+        self.assertEqual(len(fallbacks), 2)
+
+    def test_failed_fingerprint_is_reportable(self) -> None:
+        fingerprint = web_discovery.failed_fingerprint(
+            "https://10.0.0.12:8443",
+            UnicodeDecodeError("utf-8", b"\x80", 0, 1, "invalid"),
+            {},
+        )
+        self.assertFalse(fingerprint["reachable"])
+        self.assertIn("UnicodeDecodeError", fingerprint["error"])
+        self.assertTrue(any(action["type"] == "stop" for action in fingerprint["actions"]))
+
     def test_port_intelligence(self) -> None:
         args = argparse.Namespace(playbooks=[], technology=[])
         _, _, _, _, metadata = web_discovery.load_catalog(args)

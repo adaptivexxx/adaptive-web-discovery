@@ -260,6 +260,10 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--status-codes", default="200,204,301,302,307,401,403,405", help="Included HTTP statuses")
     p.add_argument("--timeout", type=positive_int, default=10, help="Request timeout in seconds")
     p.add_argument("--fingerprint-probes", choices=("basic", "extensive"), default="extensive")
+    p.add_argument(
+        "--no-ip-fallback", action="store_false", dest="ip_fallback", default=True,
+        help="Do not retry unreachable imported Nmap hostname targets using their IP address",
+    )
     p.add_argument("--scope-policy", type=Path, help="JSON scope policy controlling candidate authorization")
     p.add_argument("--expand-authorized-candidates", action="store_true", help="Fingerprint authorized discovered hostnames")
     p.add_argument("--max-candidate-expansion", type=positive_int, default=25)
@@ -569,6 +573,51 @@ def gnmap_targets(
     return list(dict.fromkeys(targets))
 
 
+def format_url_host(host: str) -> str:
+    try:
+        return f"[{host}]" if ipaddress.ip_address(host).version == 6 else host
+    except ValueError:
+        return host
+
+
+def ip_fallback_targets(
+    fingerprints: list[dict[str, object]],
+    services: list[dict[str, object]],
+    existing_targets: list[str],
+) -> list[str]:
+    service_addresses = {}
+    for service in services:
+        hostname = service.get("hostname")
+        address = service.get("address")
+        if hostname and address and hostname != address:
+            service_addresses.setdefault(
+                (str(hostname).lower(), int(service["port"])),
+                [],
+            ).append(str(address))
+
+    fallbacks = []
+    existing = set(existing_targets)
+    for fingerprint in fingerprints:
+        if fingerprint.get("reachable"):
+            continue
+        parsed = urlparse(str(fingerprint["target"]))
+        if not parsed.hostname:
+            continue
+        try:
+            ipaddress.ip_address(parsed.hostname)
+            continue
+        except ValueError:
+            pass
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        for address in service_addresses.get((parsed.hostname.lower(), port), []):
+            suffix = "" if port == (443 if parsed.scheme == "https" else 80) else f":{port}"
+            target = f"{parsed.scheme}://{format_url_host(address)}{suffix}"
+            if target not in existing:
+                existing.add(target)
+                fallbacks.append(target)
+    return fallbacks
+
+
 def read_targets(
     args: argparse.Namespace,
     playbook_metadata: dict[str, dict[str, object]],
@@ -770,7 +819,7 @@ def curl_probe(target: str, path: str, args: argparse.Namespace) -> dict[str, ob
     if args.proxy:
         cmd += ["-x", args.proxy]
     cmd.append(url)
-    completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    completed = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     response = completed.stdout[-65536:]
     statuses = re.findall(r"^HTTP/\S+\s+(\d{3})", response, re.MULTILINE)
     return {
@@ -791,6 +840,8 @@ def openssl_fingerprint(host: str, port: int, timeout: int) -> dict[str, object]
             input="",
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )
@@ -803,12 +854,14 @@ def openssl_fingerprint(host: str, port: int, timeout: int) -> dict[str, object]
                 input=certificate.group(0),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 check=False,
             )
             result["certificate"] = details.stdout.strip()
         return result
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired, UnicodeError) as exc:
         return {"error": str(exc)}
 
 
@@ -966,6 +1019,28 @@ def fingerprint_target(
         {**candidate, "state": scope_decision(candidate["host"], scope_policy)[0], "reason": scope_decision(candidate["host"], scope_policy)[1]}
         for candidate in discovered_hosts(target, probes, tls)
     ]
+    fingerprint["actions"] = make_actions(fingerprint, playbook_metadata)
+    return fingerprint
+
+
+def failed_fingerprint(
+    target: str,
+    error: BaseException,
+    playbook_metadata: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    fingerprint = {
+        "target": target,
+        "reachable": False,
+        "server": None,
+        "powered_by": None,
+        "tls": {"error": str(error)},
+        "technologies": {},
+        "wildcard_response": False,
+        "manual_follow_up": [],
+        "probes": [],
+        "candidates": [],
+        "error": f"{type(error).__name__}: {error}",
+    }
     fingerprint["actions"] = make_actions(fingerprint, playbook_metadata)
     return fingerprint
 
@@ -1577,7 +1652,10 @@ def main() -> int:
                     for target in targets
                 }
                 for completed_count, future in enumerate(concurrent.futures.as_completed(future_targets), 1):
-                    fingerprint = future.result()
+                    try:
+                        fingerprint = future.result()
+                    except Exception as exc:
+                        fingerprint = failed_fingerprint(future_targets[future], exc, playbook_metadata)
                     fingerprints.append(fingerprint)
                     technologies = ",".join(fingerprint["technologies"]) or "unknown"
                     level = "OK" if fingerprint["reachable"] else "WARN"
@@ -1588,6 +1666,37 @@ def main() -> int:
                         f" technologies={technologies}",
                         args.color,
                     )
+            if args.ip_fallback:
+                fallbacks = ip_fallback_targets(fingerprints, discovered_services, targets)
+                if fallbacks:
+                    console("PHASE", f"Retrying {len(fallbacks)} unreachable hostname target(s) by IP address", args.color)
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
+                        future_targets = {
+                            executor.submit(
+                                fingerprint_target,
+                                target,
+                                args,
+                                signatures,
+                                follow_up,
+                                scope_policy,
+                                playbook_metadata,
+                            ): target
+                            for target in fallbacks
+                        }
+                        for completed_count, future in enumerate(concurrent.futures.as_completed(future_targets), 1):
+                            try:
+                                fingerprint = future.result()
+                            except Exception as exc:
+                                fingerprint = failed_fingerprint(future_targets[future], exc, playbook_metadata)
+                            fingerprints.append(fingerprint)
+                            level = "OK" if fingerprint["reachable"] else "WARN"
+                            console(
+                                level,
+                                f"IP fallback {completed_count}/{len(future_targets)}"
+                                f" | {future_targets[future]} | reachable={fingerprint['reachable']}",
+                                args.color,
+                            )
+                    targets = list(dict.fromkeys(targets + fallbacks))
             if args.expand_authorized_candidates:
                 expansions = candidate_targets(fingerprints, args.max_candidate_expansion)
                 if expansions:
@@ -1606,7 +1715,10 @@ def main() -> int:
                             for target in expansions
                         }
                         for completed_count, future in enumerate(concurrent.futures.as_completed(future_targets), 1):
-                            fingerprint = future.result()
+                            try:
+                                fingerprint = future.result()
+                            except Exception as exc:
+                                fingerprint = failed_fingerprint(future_targets[future], exc, playbook_metadata)
                             fingerprints.append(fingerprint)
                             level = "OK" if fingerprint["reachable"] else "WARN"
                             console(
