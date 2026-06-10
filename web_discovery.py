@@ -1486,6 +1486,13 @@ def main() -> int:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir = args.output.expanduser().resolve() / timestamp
     fingerprints = []
+    print(
+        f"imported targets={len(targets)} services={len(discovered_services)}"
+        f" warnings={len(import_warnings)} mode={args.mode}",
+        flush=True,
+    )
+    if not args.dry_run:
+        print(f"output={run_dir}", flush=True)
     if not args.dry_run:
         run_dir.mkdir(parents=True, exist_ok=True)
         write_port_catalog(run_dir, playbook_metadata)
@@ -1493,27 +1500,64 @@ def main() -> int:
         if args.dry_run:
             print(f"dry-run: would fingerprint {len(targets)} target(s) with {args.fingerprint_probes} probes")
         else:
+            probe_count = len(FINGERPRINT_PROBES) if args.fingerprint_probes == "extensive" else 4
+            print(
+                f"fingerprinting targets={len(targets)} probes-per-target={probe_count}"
+                f" concurrency={args.host_concurrency} timeout={args.timeout}s",
+                flush=True,
+            )
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
-                fingerprints = list(executor.map(
-                    lambda target: fingerprint_target(target, args, signatures, follow_up, scope_policy, playbook_metadata),
-                    targets,
-                ))
+                future_targets = {
+                    executor.submit(
+                        fingerprint_target,
+                        target,
+                        args,
+                        signatures,
+                        follow_up,
+                        scope_policy,
+                        playbook_metadata,
+                    ): target
+                    for target in targets
+                }
+                for completed_count, future in enumerate(concurrent.futures.as_completed(future_targets), 1):
+                    fingerprint = future.result()
+                    fingerprints.append(fingerprint)
+                    technologies = ",".join(fingerprint["technologies"]) or "unknown"
+                    print(
+                        f"fingerprint-progress={completed_count}/{len(future_targets)}"
+                        f" target={future_targets[future]} reachable={fingerprint['reachable']}"
+                        f" technologies={technologies}",
+                        flush=True,
+                    )
             if args.expand_authorized_candidates:
                 expansions = candidate_targets(fingerprints, args.max_candidate_expansion)
                 if expansions:
-                    print(f"expanding authorized candidates={len(expansions)}")
+                    print(f"expanding authorized candidates={len(expansions)}", flush=True)
                     with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
-                        fingerprints += list(executor.map(
-                            lambda target: fingerprint_target(target, args, signatures, follow_up, scope_policy, playbook_metadata),
-                            expansions,
-                        ))
+                        future_targets = {
+                            executor.submit(
+                                fingerprint_target,
+                                target,
+                                args,
+                                signatures,
+                                follow_up,
+                                scope_policy,
+                                playbook_metadata,
+                            ): target
+                            for target in expansions
+                        }
+                        for completed_count, future in enumerate(concurrent.futures.as_completed(future_targets), 1):
+                            fingerprint = future.result()
+                            fingerprints.append(fingerprint)
+                            print(
+                                f"candidate-progress={completed_count}/{len(future_targets)}"
+                                f" target={future_targets[future]} reachable={fingerprint['reachable']}",
+                                flush=True,
+                            )
                     targets = list(dict.fromkeys(targets + expansions))
             mark_aliases(fingerprints)
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "fingerprints.json").write_text(json.dumps(fingerprints, indent=2) + "\n", encoding="utf-8")
-            for fingerprint in fingerprints:
-                technologies = ",".join(fingerprint["technologies"]) or "unknown"
-                print(f"fingerprint target={fingerprint['target']} reachable={fingerprint['reachable']} technologies={technologies}")
     elif not args.dry_run:
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "fingerprints.json").write_text("[]\n", encoding="utf-8")
@@ -1564,9 +1608,15 @@ def main() -> int:
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
         futures = [executor.submit(run_job, job, tool, args) for job in jobs]
-        for future in concurrent.futures.as_completed(futures):
+        for completed_count, future in enumerate(concurrent.futures.as_completed(futures), 1):
             try:
-                results.append(future.result())
+                result = future.result()
+                results.append(result)
+                print(
+                    f"job-progress={completed_count}/{len(futures)}"
+                    f" target={result.get('target', 'unknown')} returncode={result.get('returncode')}",
+                    flush=True,
+                )
             except ValueError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 results.append({"returncode": 2, "error": str(exc)})
