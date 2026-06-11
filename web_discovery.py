@@ -425,13 +425,20 @@ def preflight_summary(args: argparse.Namespace) -> dict[str, object]:
     if args.network_file:
         networks = read_network_specs(args.network_file)
         ports = read_port_files(args.ports_file or [])
-        host_count = sum(max(1, network.num_addresses - (2 if network.version == 4 and network.num_addresses > 2 else 0)) for network in map(ipaddress.ip_network, networks))
+        network_host_counts = [
+            max(1, network.num_addresses - (2 if network.version == 4 and network.num_addresses > 2 else 0))
+            for network in map(ipaddress.ip_network, networks)
+        ]
+        host_count = sum(network_host_counts)
         summary.update({
             "networks": len(networks),
             "estimated_hosts": host_count,
+            "largest_worker_target_hosts": max(network_host_counts, default=0),
             "ports": len(ports),
             "estimated_tcp_probes": host_count * len(ports),
             "nmap_workers": args.nmap_workers,
+            "nmap_min_hostgroup": getattr(args, "nmap_min_hostgroup", None),
+            "per_worker_min_rate": args.nmap_min_rate,
             "aggregate_min_rate": args.nmap_workers * args.nmap_min_rate,
         })
     return summary
@@ -444,6 +451,29 @@ def print_preflight(args: argparse.Namespace, summary: dict[str, object]) -> Non
         console("WARN", "estimated TCP probe volume exceeds 100 million", args.color)
     if args.nmap_default_scripts and int(summary.get("estimated_hosts", 0)) > 4096:
         console("WARN", "-sC across more than 4096 estimated hosts may significantly increase traffic and duration", args.color)
+    hostgroup = int(summary.get("nmap_min_hostgroup") or 0)
+    largest_target = int(summary.get("largest_worker_target_hosts") or 0)
+    ports = int(summary.get("ports") or 0)
+    if hostgroup and largest_target and hostgroup > largest_target:
+        console(
+            "WARN",
+            f"--min-hostgroup {hostgroup} exceeds the largest per-worker target ({largest_target} hosts);"
+            " Nmap will use a smaller group where necessary",
+            args.color,
+        )
+    if hostgroup > 256 and ports > 20:
+        console(
+            "WARN",
+            f"--min-hostgroup {hostgroup} is unlikely to improve a {ports}-port scan and delays partial results;"
+            " reserve very large host groups for few-port discovery scans",
+            args.color,
+        )
+    if int(summary.get("aggregate_min_rate", 0)) >= 20_000:
+        console(
+            "WARN",
+            "aggregate minimum Nmap rate is at least 20,000 packets/sec; validate loss and missed-open-port rates",
+            args.color,
+        )
 
 
 def serializable_args(args: argparse.Namespace) -> dict[str, object]:

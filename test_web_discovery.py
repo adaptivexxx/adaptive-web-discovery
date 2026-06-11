@@ -198,6 +198,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(summary["estimated_hosts"], 3)
         self.assertEqual(summary["estimated_tcp_probes"], 6)
         self.assertEqual(summary["aggregate_min_rate"], 2000)
+        self.assertEqual(summary["per_worker_min_rate"], 500)
+        self.assertIsNone(summary["nmap_min_hostgroup"])
+        self.assertEqual(summary["largest_worker_target_hosts"], 2)
 
     def test_scope_policy(self) -> None:
         policy = {

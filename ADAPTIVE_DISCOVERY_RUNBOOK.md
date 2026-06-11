@@ -85,6 +85,14 @@ sudo python3 -u web_discovery.py \
 Use `-sT` without `sudo`. The tool also detects unavailable SYN privileges and
 automatically falls back from `-sS` to `-sT` unless `--require-syn` is set.
 
+`--min-rate` applies to every Nmap worker, so the approximate aggregate floor is
+`--nmap-workers` multiplied by `--min-rate`. For example, eight workers at
+`--min-rate 2000` request an aggregate floor of roughly 16,000 packets per second.
+`--min-hostgroup 4096` is accepted, but each worker scans one supplied CIDR and Nmap
+uses a smaller group when that CIDR has fewer than 4096 hosts. Large host groups are
+most useful for scans of only a few ports; for broad multi-port discovery they can
+delay results without materially improving speed.
+
 ## 4. Run fingerprinting first
 
 ```bash
