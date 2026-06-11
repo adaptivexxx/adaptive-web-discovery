@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adaptive-web-discovery"
+version = "0.1.0"
+description = "Authorized staged network and web content discovery orchestrator"
+readme = "WEB_DISCOVERY.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+
+[project.scripts]
+adaptive-web-discovery = "web_discovery:main"
+
+[tool.setuptools]
+py-modules = ["web_discovery"]
+
+[tool.setuptools.data-files]
+"web_discovery_playbooks" = ["web_discovery_playbooks/*.json"]
+"web_discovery_playbooks/api" = ["web_discovery_playbooks/api/*.json"]
+"web_discovery_playbooks/application-platform" = ["web_discovery_playbooks/application-platform/*.json"]
+"web_discovery_playbooks/data" = ["web_discovery_playbooks/data/*.json"]
+"web_discovery_playbooks/delivery-gitops" = ["web_discovery_playbooks/delivery-gitops/*.json"]
+"web_discovery_playbooks/gateway-proxy" = ["web_discovery_playbooks/gateway-proxy/*.json"]
+"web_discovery_playbooks/identity" = ["web_discovery_playbooks/identity/*.json"]
+"web_discovery_playbooks/infrastructure" = ["web_discovery_playbooks/infrastructure/*.json"]
+"web_discovery_playbooks/kubernetes" = ["web_discovery_playbooks/kubernetes/*.json"]
+"web_discovery_playbooks/messaging" = ["web_discovery_playbooks/messaging/*.json"]
+"web_discovery_playbooks/observability" = ["web_discovery_playbooks/observability/*.json"]
+"web_discovery_playbooks/registry-storage" = ["web_discovery_playbooks/registry-storage/*.json"]
+"web_discovery_playbooks/sidecar-mesh" = ["web_discovery_playbooks/sidecar-mesh/*.json"]

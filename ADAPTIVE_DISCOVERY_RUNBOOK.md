@@ -48,7 +48,44 @@ targets only for ports identified as HTTP/TLS services or matching `--http-ports
 it attempts both HTTP and HTTPS against every open TCP port and should only be used when
 explicitly authorized.
 
-## 3. Run fingerprinting first
+## 3. Run staged network discovery
+
+For authorized CIDR ranges, use staged discovery. The first stage finds open ports
+without expensive scripts. The second stage runs version detection and the selected
+read-only NSE profile only against confirmed open services.
+
+```bash
+sudo python3 -u web_discovery.py \
+  -iL prod_subnets.txt \
+  -ports ports.txt \
+  --scan-profile aggressive \
+  --nmap-stages staged \
+  --nse-profile safe \
+  -sS -Pn -T4 \
+  --min-rate 750 \
+  --min-hostgroup 256 \
+  --nmap-workers 8 \
+  -oA prod-extensive \
+  --mode smart \
+  --profile deep \
+  --tool ffuf \
+  --seclists ~/SecLists/Discovery/Web-Content \
+  --fingerprint-probes basic \
+  --host-concurrency 32 \
+  --threads 20 \
+  --global-rate 1600 \
+  --max-open-services 100000 \
+  --max-enumeration-targets 5000 \
+  --max-scanner-jobs 20000 \
+  --deadline-minutes 720 \
+  --color always \
+  --acknowledge-authorization
+```
+
+Use `-sT` without `sudo`. The tool also detects unavailable SYN privileges and
+automatically falls back from `-sS` to `-sT` unless `--require-syn` is set.
+
+## 4. Run fingerprinting first
 
 ```bash
 python3 web_discovery.py \
@@ -62,7 +99,7 @@ python3 web_discovery.py \
 Review candidates and next actions in `report.md` or `report.html`. Certificate SANs and
 response-linked hostnames outside explicit scope remain candidates and are not scanned.
 
-## 4. Run smart enumeration
+## 5. Run smart enumeration
 
 After reviewing scope and rate limits:
 
@@ -84,7 +121,7 @@ python3 web_discovery.py \
 Unreachable, rate-limited, and wildcard/soft-404 targets are recorded but excluded from
 automatic enumeration.
 
-## 5. Review output
+## 6. Review output
 
 Every completed run contains:
 
@@ -92,6 +129,12 @@ Every completed run contains:
 - `fingerprints.json`: HTTP, TLS, technology, candidate, and action evidence.
 - `discovery.sqlite3`: targets, probes, technologies, candidates, actions, and jobs.
 - `findings.json` and `findings.csv`: normalized findings suitable for downstream tools.
+- `findings.sarif`: normalized findings for SARIF-compatible review systems.
+- `coverage.json`: counts and coverage ratios for discovery, fingerprinting, and jobs.
+- `comparison.json`: service changes when `--compare-run` is supplied.
+- `provenance.json`: input hashes and tool versions.
+- `protocol-follow-up.json`: read-only protocol-aware follow-up recommendations.
+- `virtual-host-candidates.json`: certificate and response-derived hostname candidates.
 - `services.json`: complete GNMAP-imported service inventory.
 - `import-warnings.json`: line-level ambiguous or skipped Nmap/GNMAP records.
 - `port-intelligence.json`: merged exact port roles and technology port ranges.

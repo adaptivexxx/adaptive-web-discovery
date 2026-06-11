@@ -133,6 +133,11 @@ TCP connect scans by default; use `--nmap-scan-type syn` only when running with 
 privileges. Worker commands, return codes, and bounded output are preserved in
 `nmap-discovery.json` and the final manifest.
 
+`--nmap-stages staged` is the default professional workflow. Broad discovery omits
+version detection and NSE scripts; only proven-open hosts and ports receive targeted
+enrichment with `-sV` and the selected read-only `--nse-profile` (`none`, `safe`, `web`,
+or `cloud-native`). Use `--nmap-stages single` only when a combined scan is required.
+
 The default worker command is equivalent to:
 
 ```bash
@@ -145,6 +150,10 @@ The CLI accepts familiar Nmap flags directly: `-sT`, `-sS`, `-Pn`, `-sV`, `-sC`,
 `--host-timeout`. Existing `--nmap-*` forms remain backward-compatible aliases.
 Use `--nmap-extra-args` for other advanced Nmap options. Output files, port selection, and
 worker targets remain tool-managed.
+
+When `-sS` is unavailable because the process or environment lacks raw-socket privileges,
+the tool automatically retries discovery with `-sT`. Use `--require-syn` to disable this
+fallback and fail instead.
 
 XML is the default output because it is the structured source used for automatic
 ingestion. Use `--nmap-output-name prod-scan` to produce names such as
@@ -169,7 +178,34 @@ probes, Nmap workers, and aggregate minimum packet rate without scanning.
 Every completed stage updates `checkpoint.json`; the effective arguments and preflight
 estimate are preserved in `run-config.json`. Resume an interrupted run with
 `--resume /path/to/existing/run` plus the original inputs. Resume reuses valid Nmap worker
-XML, completed fingerprints, and existing scanner output files.
+XML, enrichment XML, completed fingerprints, and existing scanner output files. Use
+`--rerun-stage nmap|fingerprint|enumeration` or `--retry-failed` for controlled
+reprocessing.
+
+Adaptive enumeration is enabled by default. Unknown targets receive the first broad
+wordlist plus smart infrastructure routes, while evidence-rich targets can escalate to
+the complete selected profile. Guardrails include `--max-open-services`,
+`--max-enumeration-targets`, `--max-scanner-jobs`, `--global-rate`, and
+`--deadline-minutes`.
+
+Completed runs include `coverage.json`, `provenance.json`, `comparison.json`,
+`findings.sarif`, `virtual-host-candidates.json`, and `protocol-follow-up.json`.
+
+Install the console command on systems with setuptools available:
+
+```bash
+python3 -m pip install .
+adaptive-web-discovery --help
+```
+
+Dependency-free local installation, useful on Amazon Linux 2023:
+
+```bash
+chmod +x install.sh
+./install.sh
+export PATH="$HOME/.local/bin:$PATH"
+adaptive-web-discovery --help
+```
 
 Run API-focused discovery with controlled concurrency:
 

@@ -50,6 +50,24 @@ class DiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tool-managed"):
             web_discovery.nmap_discovery_command("10.0.0.0/24", "80", Path("/tmp/network"), args)
 
+    def test_staged_nmap_command_and_safe_nse_profile(self) -> None:
+        args = argparse.Namespace(
+            nmap_scan_type="connect", nmap_min_rate=500, nmap_max_retries=2,
+            nmap_host_timeout="10m", nmap_version_detection=True, nmap_min_hostgroup=None,
+            nmap_timing="4", nmap_default_scripts=True, nmap_host_discovery=False,
+            nmap_extra_args="", nmap_stages="staged", nse_profile="safe",
+            nmap_output_format="xml", nmap_output_all_name=None,
+        )
+        discovery = web_discovery.nmap_discovery_command("10.0.0.0/24", "80,443", Path("/tmp/discovery"), args)
+        enrichment = web_discovery.nmap_discovery_command(
+            "source", "80,443", Path("/tmp/enriched"), args, enrichment=True, target_file=Path("/tmp/targets"),
+        )
+        self.assertNotIn("-sV", discovery)
+        self.assertNotIn("--script", discovery)
+        self.assertIn("-sV", enrichment)
+        self.assertIn("--script", enrichment)
+        self.assertIn("http-title,http-headers,ssl-cert", enrichment)
+
     def test_nmap_discovery_stops_when_all_workers_fail(self) -> None:
         root = Path(tempfile.mkdtemp())
         networks = root / "networks.txt"
@@ -58,17 +76,24 @@ class DiscoveryTests(unittest.TestCase):
         ports.write_text("80,443\n", encoding="utf-8")
         args = argparse.Namespace(
             network_file=[networks], ports_file=[ports], dry_run=False, color="never",
-            nmap_workers=1, nmap_scan_type="syn", nmap_min_rate=500,
+            nmap_workers=1, nmap_scan_type="connect", nmap_min_rate=500,
             nmap_max_retries=2, nmap_host_timeout="10m", nmap_min_hostgroup=None,
             nmap_timing="4", nmap_version_detection=True, nmap_default_scripts=False,
             nmap_host_discovery=False, nmap_extra_args="", nmap_output_format="all",
-            nmap_output_all_name="prod-scan", nmap_output_name="scan",
+            nmap_output_all_name="prod-scan", nmap_output_name="scan", require_syn=False,
         )
         failed = SimpleNamespace(returncode=1, stdout="", stderr="TCP/IP fingerprinting requires root privileges.\nQUITTING!\n")
         with patch.object(web_discovery.shutil, "which", return_value="/usr/bin/nmap"), patch.object(web_discovery.subprocess, "run", return_value=failed):
             with self.assertRaisesRegex(ValueError, "all Nmap discovery workers failed"):
                 web_discovery.run_nmap_discovery(args, root / "run")
         self.assertTrue((root / "run" / "nmap-discovery.json").is_file())
+
+    def test_syn_scan_falls_back_to_connect_scan(self) -> None:
+        args = argparse.Namespace(nmap_scan_type="syn")
+        with patch.object(web_discovery.os, "geteuid", return_value=1000):
+            available, reason = web_discovery.syn_scan_available(args)
+        self.assertFalse(available)
+        self.assertIn("not root", reason)
 
     def test_nmap_discovery_resume_reuses_existing_xml(self) -> None:
         root = Path(tempfile.mkdtemp())
@@ -87,6 +112,7 @@ class DiscoveryTests(unittest.TestCase):
             nmap_timing="4", nmap_version_detection=True, nmap_default_scripts=False,
             nmap_host_discovery=False, nmap_extra_args="", nmap_output_format="all",
             nmap_output_all_name="prod-scan", nmap_output_name="scan", resume=run_dir,
+            require_syn=False,
         )
         with patch.object(web_discovery.shutil, "which", return_value="/usr/bin/nmap"), patch.object(web_discovery.subprocess, "run") as run:
             outputs, results = web_discovery.run_nmap_discovery(args, run_dir)
@@ -328,6 +354,30 @@ class DiscoveryTests(unittest.TestCase):
         )
         fingerprint["probes"] = [{"status": 405, "error": ""}]
         self.assertEqual(web_discovery.reachability_summary(fingerprint), "http=yes statuses=405")
+
+    def test_adaptive_scanner_jobs_and_operational_artifacts(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        wordlists = [root / "quick.txt", root / "deep.txt"]
+        for path in wordlists:
+            path.write_text("health\n", encoding="utf-8")
+        base = {
+            "reachable": True, "wildcard_response": False,
+            "probes": [{"status": 404, "url": "http://example.test", "analysis": {"rate_limited": False}}],
+        }
+        fingerprints = [
+            {**base, "target": "http://plain.test", "technologies": {}},
+            {**base, "target": "http://grafana.test", "technologies": {"grafana": {}}},
+        ]
+        args = argparse.Namespace(max_enumeration_targets=10, enumeration_strategy="adaptive")
+        targets, jobs = web_discovery.scanner_jobs(root, fingerprints, wordlists, "json", args)
+        self.assertEqual(len(targets), 2)
+        self.assertEqual(len(jobs), 3)
+        findings = [{"id": "F-1", "severity": "info", "title": "Test", "target": "http://plain.test", "evidence": "ok"}]
+        coverage, comparison = web_discovery.write_operational_artifacts(root, {}, [], fingerprints, [], findings, None)
+        self.assertIsNone(comparison)
+        self.assertEqual(coverage["web_targets_fingerprinted"], 2)
+        self.assertTrue((root / "findings.sarif").is_file())
+        self.assertTrue((root / "protocol-follow-up.json").is_file())
 
     def test_port_intelligence(self) -> None:
         args = argparse.Namespace(playbooks=[], technology=[])

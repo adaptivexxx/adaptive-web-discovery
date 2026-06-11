@@ -20,6 +20,7 @@ import ssl
 import subprocess
 import sys
 import threading
+import time
 import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass
@@ -198,7 +199,11 @@ FOLLOW_UP = {
 }
 
 EXPLICIT_ONLY_TECHNOLOGIES = {"cloud-metadata-proxy"}
-BUNDLED_PLAYBOOKS = Path(__file__).with_name("web_discovery_playbooks")
+BUNDLED_PLAYBOOKS = (
+    Path(__file__).with_name("web_discovery_playbooks")
+    if Path(__file__).with_name("web_discovery_playbooks").is_dir()
+    else Path(sys.prefix) / "web_discovery_playbooks"
+)
 DEFAULT_HTTP_PORTS = {80, 3000, 5000, 8000, 8001, 8080, 8081, 8082, 8088, 8888, 9000, 9090, 9093, 9180, 9200, 9411}
 DEFAULT_HTTPS_PORTS = {443, 2379, 4191, 5556, 6443, 8200, 8443, 8444, 10250, 15021}
 
@@ -240,6 +245,12 @@ SCAN_PROFILES = {
         "host_concurrency": 40, "threads": 40, "rate": 100, "profile": "deep",
     },
 }
+NSE_PROFILES = {
+    "none": (),
+    "safe": ("http-title", "http-headers", "ssl-cert"),
+    "web": ("http-title", "http-headers", "http-methods", "http-robots.txt", "ssl-cert", "ssl-enum-ciphers"),
+    "cloud-native": ("http-title", "http-headers", "http-methods", "ssl-cert"),
+}
 
 
 @dataclass(frozen=True)
@@ -261,10 +272,13 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--max-network-endpoints", type=positive_int, default=10000, help="Maximum generated network address/port pairs")
     p.add_argument("--network-discovery", choices=("nmap", "direct"), default="nmap", help="How -iL/-ports inputs discover open services")
     p.add_argument("--nmap-workers", type=positive_int, default=8, help="Parallel Nmap processes for network discovery")
+    p.add_argument("--nmap-stages", choices=("single", "staged"), default="staged", help="Run one combined scan or discovery followed by targeted enrichment")
+    p.add_argument("--nse-profile", choices=tuple(NSE_PROFILES), default="safe", help="Read-only NSE script profile used during enrichment")
     p.add_argument("--nmap-scan-type", choices=("connect", "syn"), default="connect", help="Nmap TCP scan type; syn generally requires root")
     scan_type = p.add_mutually_exclusive_group()
     scan_type.add_argument("-sT", action="store_const", const="connect", dest="nmap_scan_type", help="Use Nmap TCP connect scan")
     scan_type.add_argument("-sS", action="store_const", const="syn", dest="nmap_scan_type", help="Use Nmap SYN scan; generally requires root")
+    p.add_argument("--require-syn", action="store_true", help="Fail instead of falling back to -sT when SYN scan privileges are unavailable")
     p.add_argument("--nmap-min-rate", "--min-rate", dest="nmap_min_rate", type=positive_int, default=500, help="Minimum packet rate per Nmap worker")
     p.add_argument("--nmap-min-hostgroup", "--min-hostgroup", dest="nmap_min_hostgroup", type=positive_int, help="Minimum hosts scanned in parallel by each Nmap worker")
     p.add_argument("--nmap-max-retries", "--max-retries", dest="nmap_max_retries", type=positive_int, default=2, help="Maximum Nmap probe retransmissions")
@@ -294,6 +308,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--mode", choices=("smart", "fingerprint", "enumerate"), default="smart")
     p.add_argument("--scan-profile", choices=tuple(SCAN_PROFILES), help="Apply cautious, balanced, or aggressive operational defaults")
     p.add_argument("--resume", type=Path, help="Resume an existing run directory")
+    p.add_argument("--rerun-stage", choices=("nmap", "fingerprint", "enumeration"), help="Force one stage to rerun during resume")
     p.add_argument("--preflight-only", action="store_true", help="Validate inputs and print estimates without scanning")
     p.add_argument("--tool", choices=("auto", "ffuf", "gobuster"), default="auto")
     p.add_argument("--profile", choices=tuple(PROFILES), default="default")
@@ -302,6 +317,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("-t", "--threads", type=positive_int, default=40, help="Threads used by each scanner process")
     p.add_argument("--host-concurrency", type=positive_int, default=2, help="Scanner processes run concurrently")
     p.add_argument("--rate", type=positive_int, help="Maximum requests/sec per scanner where supported")
+    p.add_argument("--global-rate", type=positive_int, help="Approximate total scanner requests/sec divided across concurrent jobs")
     p.add_argument("-x", "--extensions", default="", help="Comma-separated file extensions")
     p.add_argument("-H", "--header", action="append", default=[], help="HTTP header; repeatable")
     p.add_argument("--cookie", help="Cookie header value")
@@ -323,6 +339,13 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--validate-playbooks", action="store_true", help="Validate loaded technology playbooks and exit")
     p.add_argument("--recursion", action="store_true", help="Enable recursion (ffuf only)")
     p.add_argument("--recursion-depth", type=positive_int, default=2)
+    p.add_argument("--enumeration-strategy", choices=("adaptive", "fixed"), default="adaptive", help="Escalate broad wordlists only for evidence-rich targets")
+    p.add_argument("--max-enumeration-targets", type=positive_int, default=500, help="Maximum confirmed HTTP targets sent to content enumeration")
+    p.add_argument("--max-scanner-jobs", type=positive_int, default=5000, help="Maximum ffuf/gobuster jobs")
+    p.add_argument("--max-open-services", type=positive_int, default=100000, help="Stop when imported open services exceed this limit")
+    p.add_argument("--deadline-minutes", type=positive_int, help="Stop starting new scanner jobs after this many minutes")
+    p.add_argument("--retry-failed", action="store_true", help="On resume, rerun previously failed scanner jobs")
+    p.add_argument("--compare-run", type=Path, help="Compare discovered services against another run directory")
     p.add_argument("--follow-redirects", action="store_true")
     p.add_argument("--insecure", action="store_true", help="Skip TLS certificate verification")
     p.add_argument("--extra-args", default="", help="Additional backend arguments, parsed with shell quoting")
@@ -433,6 +456,46 @@ def serializable_args(args: argparse.Namespace) -> dict[str, object]:
         for key, value in vars(args).items()
         if key not in {"header", "cookie", "proxy"}
     }
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def write_provenance(run_dir: Path, args: argparse.Namespace) -> None:
+    inputs = []
+    for name in ("input", "network_file", "ports_file", "gnmap", "nmap", "nmap_xml", "scope_policy", "wordlist", "playbooks"):
+        value = getattr(args, name, None)
+        paths = value if isinstance(value, list) else ([value] if value else [])
+        for path in paths:
+            candidate = Path(path).expanduser()
+            if candidate.is_file():
+                inputs.append({"type": name, "path": str(candidate.resolve()), "sha256": file_sha256(candidate)})
+    tools = {"python": sys.version.split()[0]}
+    for tool, version_args in (("nmap", ["--version"]), ("ffuf", ["-V"]), ("gobuster", ["version"]), ("grpcurl", ["--version"])):
+        executable = shutil.which(tool)
+        if not executable:
+            tools[tool] = None
+            continue
+        try:
+            completed = subprocess.run(
+                [executable] + version_args,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=5,
+            )
+            output = (completed.stdout or completed.stderr).splitlines()
+            tools[tool] = output[0][:300] if output else executable
+        except (OSError, subprocess.TimeoutExpired):
+            tools[tool] = "not installed or timed out"
+    (run_dir / "provenance.json").write_text(json.dumps({"inputs": inputs, "tools": tools}, indent=2) + "\n", encoding="utf-8")
 
 
 def positive_int(value: str) -> int:
@@ -819,7 +882,14 @@ def network_file_services(args: argparse.Namespace) -> list[dict[str, object]]:
     ]
 
 
-def nmap_discovery_command(network: str, ports: str, output_base: Path, args: argparse.Namespace) -> list[str]:
+def nmap_discovery_command(
+    network: str,
+    ports: str,
+    output_base: Path,
+    args: argparse.Namespace,
+    enrichment: bool = False,
+    target_file: Path | None = None,
+) -> list[str]:
     command = [
         "nmap", "-n", "-sT" if args.nmap_scan_type == "connect" else "-sS",
         "--open", "--min-rate", str(args.nmap_min_rate),
@@ -832,10 +902,14 @@ def nmap_discovery_command(network: str, ports: str, output_base: Path, args: ar
         command += ["--min-hostgroup", str(args.nmap_min_hostgroup)]
     if args.nmap_timing:
         command.append(f"-T{args.nmap_timing}")
-    if args.nmap_version_detection:
+    nmap_stages = getattr(args, "nmap_stages", "single")
+    nse_profile = getattr(args, "nse_profile", "safe")
+    if args.nmap_version_detection and (nmap_stages == "single" or enrichment):
         command.append("-sV")
-    if args.nmap_default_scripts:
+    if args.nmap_default_scripts and nmap_stages == "single":
         command.append("-sC")
+    if enrichment and nse_profile != "none":
+        command += ["--script", ",".join(NSE_PROFILES[nse_profile])]
     extra = shlex.split(args.nmap_extra_args)
     protected = {"-p", "--ports", "-oA", "-oX", "-oN", "-oG", "-iL"}
     for index, value in enumerate(extra):
@@ -848,7 +922,8 @@ def nmap_discovery_command(network: str, ports: str, output_base: Path, args: ar
         if getattr(args, "nmap_output_format", "xml") == "all" or getattr(args, "nmap_output_all_name", None)
         else ["-oX", str(output_base.with_suffix(".xml"))]
     )
-    return command + extra + ["-p", ports] + output_args + [network]
+    target_args = ["-iL", str(target_file)] if target_file else [network]
+    return command + extra + ["-p", ports] + output_args + target_args
 
 
 def command_error_summary(result: dict[str, object]) -> str:
@@ -857,6 +932,14 @@ def command_error_summary(result: dict[str, object]) -> str:
         return "no diagnostic output"
     lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
     return " | ".join(lines[-3:] if lines else [text])[:360]
+
+
+def syn_scan_available(args: argparse.Namespace) -> tuple[bool, str]:
+    if args.nmap_scan_type != "syn":
+        return True, "not requested"
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        return False, "effective user is not root"
+    return True, "effective user is root"
 
 
 def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Path], list[dict[str, object]]]:
@@ -872,6 +955,12 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
         raise ValueError("network and port files must contain at least one network and port")
     if not args.dry_run and not shutil.which("nmap"):
         raise FileNotFoundError("nmap is required for --network-discovery nmap")
+    syn_available, syn_reason = syn_scan_available(args)
+    if not syn_available:
+        if args.require_syn:
+            raise ValueError(f"SYN scan requested but unavailable: {syn_reason}")
+        console("WARN", f"SYN scan unavailable ({syn_reason}); falling back to TCP connect scan (-sT)", args.color)
+        args.nmap_scan_type = "connect"
 
     output_dir = run_dir / "nmap-discovery"
     if not args.dry_run:
@@ -887,7 +976,7 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
     pending_jobs = []
     for network, output_base in jobs:
         xml_output = output_base.with_suffix(".xml")
-        if getattr(args, "resume", None) and xml_output.is_file():
+        if getattr(args, "resume", None) and getattr(args, "rerun_stage", None) != "nmap" and xml_output.is_file():
             parsed, issues = parse_nmap_xml_detailed(xml_output)
             if parsed or not issues:
                 reused.append({
@@ -904,13 +993,6 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
         f" scan-type={args.nmap_scan_type} min-rate={args.nmap_min_rate}",
         args.color,
     )
-    if args.nmap_scan_type == "syn" and hasattr(os, "geteuid") and os.geteuid() != 0:
-        console(
-            "WARN",
-            "SYN scan (-sS) usually requires root or CAP_NET_RAW/CAP_NET_ADMIN; use sudo or -sT if workers fail",
-            args.color,
-        )
-
     def scan(job: tuple[str, Path]) -> dict[str, object]:
         network, output_base = job
         command = nmap_discovery_command(network, port_spec, output_base, args)
@@ -943,6 +1025,20 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
                 + (f" | {command_error_summary(result)}" if result["returncode"] not in (None, 0) else ""),
                 args.color,
             )
+    privilege_failures = [
+        result for result in results
+        if result["returncode"] not in (None, 0)
+        and re.search(r"(requires root privileges|requires privileged access|not permitted)", command_error_summary(result), re.IGNORECASE)
+    ]
+    if (
+        args.nmap_scan_type == "syn"
+        and privilege_failures
+        and len(privilege_failures) == len(results)
+        and not args.require_syn
+    ):
+        console("WARN", "all SYN workers failed due to privileges; retrying network discovery with -sT", args.color)
+        args.nmap_scan_type = "connect"
+        return run_nmap_discovery(args, run_dir)
     if not args.dry_run:
         (run_dir / "nmap-discovery.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
         write_checkpoint(
@@ -960,6 +1056,58 @@ def run_nmap_discovery(args: argparse.Namespace, run_dir: Path) -> tuple[list[Pa
         raise ValueError(f"all Nmap discovery workers failed; first error: {detail}")
     if failures:
         console("WARN", f"Nmap discovery completed with {len(failures)}/{len(results)} failed worker(s)", args.color)
+    if getattr(args, "nmap_stages", "single") == "staged" and outputs and not args.dry_run:
+        console("PHASE", "Targeted Nmap service enrichment", args.color)
+        enrichment_jobs = []
+        enrichment_dir = run_dir / "nmap-enrichment"
+        enrichment_dir.mkdir(parents=True, exist_ok=True)
+        for index, source in enumerate(outputs, 1):
+            services, _ = parse_nmap_xml_detailed(source)
+            addresses = sorted({str(service["address"]) for service in services})
+            open_ports = {int(service["port"]) for service in services}
+            if not addresses or not open_ports:
+                continue
+            target_file = enrichment_dir / f"targets-{index:04d}.txt"
+            target_file.write_text("\n".join(addresses) + "\n", encoding="utf-8")
+            enrichment_jobs.append((
+                str(source), target_file, compact_ports(open_ports),
+                enrichment_dir / f"{output_name}-enriched-{index:04d}",
+            ))
+
+        def enrich(job: tuple[str, Path, str, Path]) -> dict[str, object]:
+            source, target_file, open_ports, output_base = job
+            command = nmap_discovery_command(
+                source, open_ports, output_base, args, enrichment=True, target_file=target_file,
+            )
+            console("RUN", shlex.join(command), args.color)
+            completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+            return {
+                "stage": "enrichment", "source": source, "output": str(output_base.with_suffix(".xml")),
+                "output_base": str(output_base), "command": command, "returncode": completed.returncode,
+                "stdout": completed.stdout[-4096:], "stderr": completed.stderr[-4096:],
+            }
+
+        enriched = []
+        pending_enrichment = []
+        for job in enrichment_jobs:
+            xml_output = job[3].with_suffix(".xml")
+            if getattr(args, "resume", None) and getattr(args, "rerun_stage", None) != "nmap" and xml_output.is_file():
+                enriched.append(xml_output)
+            else:
+                pending_enrichment.append(job)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.nmap_workers) as executor:
+            futures = [executor.submit(enrich, job) for job in pending_enrichment]
+            for completed_count, future in enumerate(concurrent.futures.as_completed(futures), 1):
+                result = future.result()
+                results.append(result)
+                level = "OK" if result["returncode"] == 0 else "WARN"
+                console(level, f"enrichment {completed_count}/{len(futures)} | returncode={result['returncode']}", args.color)
+                if result["returncode"] == 0 and Path(result["output"]).is_file():
+                    enriched.append(Path(result["output"]))
+        if enriched:
+            outputs = enriched
+        (run_dir / "nmap-discovery.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+        write_checkpoint(run_dir, "nmap_enrichment", "completed", jobs=len(enrichment_jobs), outputs=len(enriched))
     return outputs, results
 
 
@@ -1638,6 +1786,143 @@ def safe_for_enumeration(fingerprint: dict[str, object]) -> bool:
     return not any(probe["analysis"]["rate_limited"] for probe in fingerprint.get("probes", []))
 
 
+def evidence_rich(fingerprint: dict[str, object]) -> bool:
+    if fingerprint.get("technologies"):
+        return True
+    return any(
+        probe.get("status") in {200, 204, 401, 403, 405}
+        and probe.get("url") != fingerprint.get("target")
+        for probe in fingerprint.get("probes", [])
+    )
+
+
+def scanner_jobs(
+    run_dir: Path,
+    fingerprints: list[dict[str, object]],
+    wordlists: list[Path],
+    extension: str,
+    args: argparse.Namespace,
+) -> tuple[list[str], list[Job]]:
+    eligible = [fingerprint for fingerprint in fingerprints if safe_for_enumeration(fingerprint)]
+    eligible = eligible[:args.max_enumeration_targets]
+    targets = [str(fingerprint["target"]) for fingerprint in eligible]
+    jobs = []
+    for fingerprint in eligible:
+        selected = wordlists
+        if args.enumeration_strategy == "adaptive" and not evidence_rich(fingerprint):
+            selected = wordlists[:1]
+        jobs.extend(
+            Job(str(fingerprint["target"]), wordlist, run_dir / safe_name(str(fingerprint["target"])) / f"{wordlist.stem}.{extension}")
+            for wordlist in selected
+        )
+    return targets, jobs
+
+
+def coverage_summary(
+    preflight: dict[str, object],
+    services: list[dict[str, object]],
+    fingerprints: list[dict[str, object]],
+    results: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        **preflight,
+        "open_services": len(services),
+        "unique_open_hosts": len({service.get("address") for service in services}),
+        "web_targets_fingerprinted": len(fingerprints),
+        "http_reachable": sum(bool(item.get("reachable")) for item in fingerprints),
+        "scanner_jobs": len(results),
+        "scanner_failures": sum(item.get("returncode") not in (None, 0) for item in results),
+        "native_protocol_services": sum(
+            any(not hint.get("web") for hint in service.get("port_hints", []))
+            for service in services
+        ),
+    }
+
+
+def compare_services(current: list[dict[str, object]], previous_run: Path | None) -> dict[str, object] | None:
+    if not previous_run:
+        return None
+    previous_path = previous_run.expanduser() / "services.json"
+    if not previous_path.is_file():
+        raise ValueError(f"comparison run has no services.json: {previous_path}")
+    previous = json.loads(previous_path.read_text(encoding="utf-8"))
+    identity = lambda item: (
+        str(item.get("address")), int(item.get("port")), str(item.get("protocol")),
+        str(item.get("service")), str(item.get("version")),
+    )
+    current_map = {identity(item): item for item in current}
+    previous_map = {identity(item): item for item in previous}
+    return {
+        "new": [current_map[key] for key in sorted(current_map.keys() - previous_map.keys())],
+        "removed": [previous_map[key] for key in sorted(previous_map.keys() - current_map.keys())],
+        "unchanged": len(current_map.keys() & previous_map.keys()),
+    }
+
+
+def write_sarif(run_dir: Path, findings: list[dict[str, object]]) -> None:
+    levels = {"critical": "error", "high": "error", "medium": "warning", "low": "note", "info": "note"}
+    document = {
+        "version": "2.1.0",
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "runs": [{
+            "tool": {"driver": {"name": "adaptive-web-discovery", "rules": []}},
+            "results": [{
+                "ruleId": item["id"],
+                "level": levels.get(str(item["severity"]), "note"),
+                "message": {"text": f"{item['title']}: {item['evidence']}"},
+                "locations": [{"physicalLocation": {"artifactLocation": {"uri": str(item["target"])}}}],
+            } for item in findings],
+        }],
+    }
+    (run_dir / "findings.sarif").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+
+def write_operational_artifacts(
+    run_dir: Path,
+    preflight: dict[str, object],
+    services: list[dict[str, object]],
+    fingerprints: list[dict[str, object]],
+    results: list[dict[str, object]],
+    findings: list[dict[str, object]],
+    compare_run: Path | None,
+) -> tuple[dict[str, object], dict[str, object] | None]:
+    coverage = coverage_summary(preflight, services, fingerprints, results)
+    comparison = compare_services(services, compare_run)
+    (run_dir / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n", encoding="utf-8")
+    if comparison is not None:
+        (run_dir / "comparison.json").write_text(json.dumps(comparison, indent=2) + "\n", encoding="utf-8")
+    adapter_guidance = {
+        "grpc": "Use grpcurl with approved credentials for health/reflection checks.",
+        "otlp-grpc": "Use a non-sensitive OTLP test signal with an approved telemetry client.",
+        "kubernetes": "Use kubectl or the Kubernetes API with an approved identity and read-only requests.",
+        "redis": "Use redis-cli in read-only mode only when explicitly authorized.",
+        "postgresql": "Use an approved database identity for metadata-only validation.",
+    }
+    protocol_follow_up = []
+    for service in services:
+        hints = [hint for hint in service.get("port_hints", []) if not hint.get("web")]
+        if not hints:
+            continue
+        protocols = sorted({str(hint.get("protocol") or hint.get("technology") or "unknown") for hint in hints})
+        protocol_follow_up.append({
+            "target": f"{service.get('address')}:{service.get('port')}/{service.get('protocol')}",
+            "protocols": protocols,
+            "hints": hints,
+            "recommendations": [adapter_guidance.get(protocol, "Use an explicitly enabled read-only protocol-aware adapter.") for protocol in protocols],
+        })
+    (run_dir / "protocol-follow-up.json").write_text(json.dumps(protocol_follow_up, indent=2) + "\n", encoding="utf-8")
+    virtual_hosts = []
+    for service in services:
+        if service.get("hostname") and service.get("hostname") != service.get("address"):
+            virtual_hosts.append({"hostname": service["hostname"], "address": service["address"], "port": service["port"], "source": "nmap"})
+    for fingerprint in fingerprints:
+        for candidate in fingerprint.get("candidates", []):
+            virtual_hosts.append({"hostname": candidate["host"], "address": urlparse(str(fingerprint["target"])).hostname, "source": candidate["source"], "state": candidate["state"]})
+    (run_dir / "virtual-host-candidates.json").write_text(json.dumps(virtual_hosts, indent=2) + "\n", encoding="utf-8")
+    write_sarif(run_dir, findings)
+    return coverage, comparison
+
+
 def derive_findings(
     fingerprints: list[dict[str, object]],
     results: list[dict[str, object]],
@@ -1902,6 +2187,7 @@ def write_reports(
     import_warnings: list[dict[str, object]],
 ) -> None:
     generated = datetime.now(timezone.utc).isoformat()
+    coverage = json.loads((run_dir / "coverage.json").read_text(encoding="utf-8")) if (run_dir / "coverage.json").is_file() else {}
     counts = {severity: sum(item["severity"] == severity for item in findings) for severity in ("critical", "high", "medium", "low", "info")}
     lines = [
         "# Adaptive discovery report", "", f"Generated: {generated}", "",
@@ -1911,6 +2197,7 @@ def write_reports(
         f"- Scanner jobs: `{len(results)}`",
         f"- Findings: `{len(findings)}`",
         f"- Import warnings: `{len(import_warnings)}`",
+        f"- Coverage: `{json.dumps(coverage, sort_keys=True)}`",
         f"- Severity: critical `{counts['critical']}`, high `{counts['high']}`, medium `{counts['medium']}`, low `{counts['low']}`, info `{counts['info']}`",
         "",
         "## Findings", "",
@@ -1985,11 +2272,12 @@ def write_reports(
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:14px system-ui}}header{{background:#111827;color:white;padding:28px 34px}}main{{max-width:1500px;margin:auto;padding:24px}}h1,h2{{margin:0 0 14px}}section{{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:20px}}.metrics{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}}.metric{{padding:18px;border-radius:8px;color:white;display:flex;justify-content:space-between;align-items:end}}.metric b{{font-size:30px}}.critical{{background:var(--critical)}}.high{{background:var(--high)}}.medium{{background:var(--medium)}}.low{{background:var(--low)}}.info{{background:var(--info)}}table{{width:100%;border-collapse:collapse}}th,td{{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid var(--line)}}th{{background:#f8fafc;position:sticky;top:0}}.table-wrap{{overflow:auto;max-height:620px}}.badge{{color:white;border-radius:999px;padding:4px 8px;font-size:11px}}input,select{{padding:9px;border:1px solid var(--line);border-radius:6px;margin:0 8px 12px 0}}small{{color:var(--muted)}}@media(max-width:800px){{.metrics{{grid-template-columns:1fr 1fr}}}}
 </style></head><body><header><h1>Adaptive Discovery Report</h1><small>Generated {html.escape(generated)}</small></header><main>
 <section><h2>Executive Summary</h2><p>{len(fingerprints)} fingerprinted assets, {len(services)} imported services, {len(import_warnings)} import warnings, {len(results)} scanner jobs, {len(findings)} findings.</p><div class="metrics">{cards}</div></section>
+<section><h2>Coverage</h2><pre>{html.escape(json.dumps(coverage, indent=2))}</pre></section>
 <section><h2>Findings</h2><input id="search" placeholder="Search findings"><select id="severity"><option value="">All severities</option>{"".join(f'<option>{s}</option>' for s in counts)}</select><div class="table-wrap"><table id="findings"><thead><tr><th>Severity</th><th>ID</th><th>Finding</th><th>Target</th><th>Evidence</th><th>Recommendation</th></tr></thead><tbody>{finding_rows}</tbody></table></div></section>
 <section><h2>Assets</h2><div class="table-wrap"><table><thead><tr><th>Target</th><th>Reachable</th><th>Server</th><th>Technologies</th><th>Wildcard</th></tr></thead><tbody>{asset_rows}</tbody></table></div></section>
 <section><h2>Imported Services</h2><div class="table-wrap"><table><thead><tr><th>Address</th><th>Hostname</th><th>Port</th><th>Service</th><th>Version</th><th>Port Intelligence</th></tr></thead><tbody>{service_rows}</tbody></table></div></section>
 <section><h2>Import Quality</h2><div class="table-wrap"><table><thead><tr><th>Source</th><th>Line</th><th>Reason</th><th>Raw Record</th></tr></thead><tbody>{warning_rows}</tbody></table></div></section>
-<section><h2>Artifacts</h2><p>See <code>manifest.json</code>, <code>fingerprints.json</code>, <code>findings.json</code>, <code>findings.csv</code>, <code>services.json</code>, <code>import-warnings.json</code>, <code>port-intelligence.json</code>, and <code>discovery.sqlite3</code>.</p></section>
+<section><h2>Artifacts</h2><p>See <code>manifest.json</code>, <code>fingerprints.json</code>, <code>findings.json</code>, <code>findings.csv</code>, <code>findings.sarif</code>, <code>services.json</code>, <code>coverage.json</code>, <code>comparison.json</code>, <code>protocol-follow-up.json</code>, <code>virtual-host-candidates.json</code>, <code>provenance.json</code>, <code>import-warnings.json</code>, <code>port-intelligence.json</code>, and <code>discovery.sqlite3</code>.</p></section>
 </main><script>
 const q=document.querySelector('#search'),s=document.querySelector('#severity'),rows=[...document.querySelectorAll('#findings tbody tr')];
 function filter(){{const text=q.value.toLowerCase(),sev=s.value.toLowerCase();rows.forEach(r=>r.style.display=(!text||r.innerText.toLowerCase().includes(text))&&(!sev||r.dataset.severity===sev)?'':'none')}}
@@ -2002,6 +2290,8 @@ def main() -> int:
     argument_parser = parser()
     args = argument_parser.parse_args()
     apply_scan_profile(args, sys.argv[1:])
+    if args.global_rate:
+        args.rate = max(1, args.global_rate // args.host_concurrency)
     if args.list_technologies or args.list_port_intelligence or args.validate_playbooks:
         try:
             paths, signatures, follow_up, explicit_only, metadata = load_catalog(args)
@@ -2067,6 +2357,7 @@ def main() -> int:
                 json.dumps({"arguments": serializable_args(args), "preflight": preflight}, indent=2) + "\n",
                 encoding="utf-8",
             )
+            write_provenance(run_dir, args)
             write_checkpoint(run_dir, "preflight", "completed", **preflight)
         if args.network_file and args.network_discovery == "nmap":
             outputs, nmap_discovery_results = run_nmap_discovery(args, run_dir)
@@ -2076,6 +2367,10 @@ def main() -> int:
             if not args.dry_run:
                 args.nmap_xml = list(args.nmap_xml or []) + outputs
         targets, discovered_services, import_warnings = read_targets(args, playbook_metadata)
+        if len(discovered_services) > args.max_open_services:
+            raise ValueError(
+                f"open services={len(discovered_services)} exceeds --max-open-services {args.max_open_services}"
+            )
         scope_policy = load_scope_policy(args.scope_policy, targets)
         wordlists = resolve_wordlists(args) if args.mode != "fingerprint" else []
         tool = (
@@ -2088,9 +2383,9 @@ def main() -> int:
         return 2
 
     fingerprints = []
-    if args.resume and (run_dir / "fingerprints.json").is_file():
-        fingerprints = json.loads((run_dir / "fingerprints.json").read_text(encoding="utf-8"))
-        console("INFO", f"resumed fingerprints={len(fingerprints)}", args.color)
+    if args.resume and args.rerun_stage != "fingerprint" and (run_dir / "fingerprints.json").is_file():
+            fingerprints = json.loads((run_dir / "fingerprints.json").read_text(encoding="utf-8"))
+            console("INFO", f"resumed fingerprints={len(fingerprints)}", args.color)
     console(
         "PHASE",
         "Inventory loaded",
@@ -2218,6 +2513,9 @@ def main() -> int:
         failures = 0 if args.dry_run else sum(not fingerprint["reachable"] for fingerprint in fingerprints)
         if not args.dry_run:
             findings = derive_findings(fingerprints, [], discovered_services)
+            coverage, comparison = write_operational_artifacts(
+                run_dir, preflight, discovered_services, fingerprints, [], findings, args.compare_run,
+            )
             manifest = {
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "mode": args.mode,
@@ -2229,6 +2527,8 @@ def main() -> int:
                 "import_warnings": import_warnings,
                 "fingerprints": fingerprints,
                 "findings": findings,
+                "coverage": coverage,
+                "comparison": comparison,
                 "playbooks": playbook_metadata,
                 "results": [],
             }
@@ -2242,16 +2542,14 @@ def main() -> int:
         return 1 if failures else 0
 
     extension = "json" if tool == "ffuf" else "txt"
-    enumeration_targets = (
-        [str(fingerprint["target"]) for fingerprint in fingerprints if safe_for_enumeration(fingerprint)]
-        if args.mode == "smart" and not args.dry_run
-        else targets
-    )
-    jobs = [
-        Job(target, wordlist, run_dir / safe_name(target) / f"{wordlist.stem}.{extension}")
-        for target in enumeration_targets
-        for wordlist in wordlists
-    ]
+    if args.mode == "smart" and not args.dry_run:
+        enumeration_targets, jobs = scanner_jobs(run_dir, fingerprints, wordlists, extension, args)
+    else:
+        enumeration_targets = targets[:args.max_enumeration_targets]
+        jobs = [
+            Job(target, wordlist, run_dir / safe_name(target) / f"{wordlist.stem}.{extension}")
+            for target in enumeration_targets for wordlist in wordlists
+        ]
     if args.mode == "smart" and not args.dry_run:
         jobs += [
             Job(
@@ -2262,8 +2560,17 @@ def main() -> int:
             for fingerprint in fingerprints
             if safe_for_enumeration(fingerprint)
         ]
-    if args.resume:
-        jobs = [job for job in jobs if not job.output.is_file()]
+    if args.resume and args.rerun_stage != "enumeration":
+        failed_outputs = set()
+        if args.retry_failed and (run_dir / "manifest.json").is_file():
+            failed_outputs = {
+                str(item.get("output")) for item in json.loads((run_dir / "manifest.json").read_text(encoding="utf-8")).get("results", [])
+                if item.get("returncode") not in (None, 0)
+            }
+        jobs = [job for job in jobs if not job.output.is_file() or str(job.output) in failed_outputs]
+    if len(jobs) > args.max_scanner_jobs:
+        console("WARN", f"scanner jobs capped from {len(jobs)} to {args.max_scanner_jobs}", args.color)
+        jobs = jobs[:args.max_scanner_jobs]
     console("PHASE", "Content enumeration", args.color)
     console(
         "INFO",
@@ -2274,30 +2581,54 @@ def main() -> int:
     )
 
     results = []
-    if args.resume and (run_dir / "manifest.json").is_file():
+    if args.resume and args.rerun_stage != "enumeration" and (run_dir / "manifest.json").is_file():
         try:
             results = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8")).get("results", [])
         except (OSError, json.JSONDecodeError):
             results = []
+    deadline = time.monotonic() + args.deadline_minutes * 60 if args.deadline_minutes else None
+    pending_jobs = deque(jobs)
+    completed_count = 0
+    started_count = 0
+    deadline_reported = False
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.host_concurrency) as executor:
-        futures = [executor.submit(run_job, job, tool, args) for job in jobs]
-        for completed_count, future in enumerate(concurrent.futures.as_completed(futures), 1):
-            try:
-                result = future.result()
-                results.append(result)
-                level = "OK" if result.get("returncode") in (None, 0) else "WARN"
-                console(
-                    level,
-                    f"job {completed_count}/{len(futures)}"
-                    f" | {result.get('target', 'unknown')} | returncode={result.get('returncode')}",
-                    args.color,
-                )
-            except ValueError as exc:
-                console("ERROR", str(exc), args.color, sys.stderr)
-                results.append({"returncode": 2, "error": str(exc)})
+        active: dict[concurrent.futures.Future, Job] = {}
+        while pending_jobs or active:
+            while pending_jobs and len(active) < args.host_concurrency:
+                if deadline and time.monotonic() >= deadline:
+                    if not deadline_reported:
+                        console("WARN", "scanner deadline reached; no additional jobs will be started", args.color)
+                        deadline_reported = True
+                    pending_jobs.clear()
+                    break
+                job = pending_jobs.popleft()
+                active[executor.submit(run_job, job, tool, args)] = job
+                started_count += 1
+            if not active:
+                break
+            done, _ = concurrent.futures.wait(active, return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
+                active.pop(future)
+                completed_count += 1
+                try:
+                    result = future.result()
+                    results.append(result)
+                    level = "OK" if result.get("returncode") in (None, 0) else "WARN"
+                    console(
+                        level,
+                        f"job {completed_count}/{started_count}"
+                        f" | {result.get('target', 'unknown')} | returncode={result.get('returncode')}",
+                        args.color,
+                    )
+                except ValueError as exc:
+                    console("ERROR", str(exc), args.color, sys.stderr)
+                    results.append({"returncode": 2, "error": str(exc)})
 
     if not args.dry_run:
         findings = derive_findings(fingerprints, results, discovered_services)
+        coverage, comparison = write_operational_artifacts(
+            run_dir, preflight, discovered_services, fingerprints, results, findings, args.compare_run,
+        )
         manifest = {
             "created_at": datetime.now(timezone.utc).isoformat(),
             "tool": tool,
@@ -2311,6 +2642,8 @@ def main() -> int:
             "import_warnings": import_warnings,
             "fingerprints": fingerprints,
             "findings": findings,
+            "coverage": coverage,
+            "comparison": comparison,
             "playbooks": playbook_metadata,
             "results": results,
         }
