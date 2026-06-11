@@ -1,5 +1,7 @@
 # Adaptive discovery runbook
 
+Complete dependency and tool setup is documented in [INSTALLATION.md](INSTALLATION.md).
+
 ## 1. Prepare authorization and scope
 
 Create a JSON scope policy from `web_discovery_scope.example.json`. Include only domains

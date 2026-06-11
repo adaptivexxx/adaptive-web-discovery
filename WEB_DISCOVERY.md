@@ -8,9 +8,12 @@ targeted directory, file, API, Kubernetes, and observability route discovery wit
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.9+
 - `ffuf` or `gobuster`
 - A local SecLists checkout/package
+
+See [INSTALLATION.md](INSTALLATION.md) for complete Amazon Linux 2023 and macOS
+installation, minimal SecLists download, verification, and troubleshooting steps.
 
 Only scan systems you own or have explicit permission to assess. Execution requires
 `--acknowledge-authorization`; dry runs do not.
